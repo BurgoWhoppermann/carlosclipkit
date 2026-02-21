@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+
+# Build number counter (local to each machine)
+.buildnum
+
+# Claude Code local settings
+.claude/

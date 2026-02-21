@@ -1,0 +1,10 @@
+# Build number counter (local to each machine)
+.buildnum
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+
+# macOS
+.DS_Store
