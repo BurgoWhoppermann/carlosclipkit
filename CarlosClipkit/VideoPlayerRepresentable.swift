@@ -165,16 +165,17 @@ class LoopingPlayerController: ObservableObject {
                     let size = try? await videoTrack.load(.naturalSize)
                     let transform = try? await videoTrack.load(.preferredTransform)
 
-                    if var naturalSize = size {
+                    if let naturalSize = size {
                         // Apply transform to get correct orientation
-                        if let t = transform {
-                            if t.a == 0 && t.d == 0 {
-                                // Video is rotated 90 or 270 degrees
-                                naturalSize = CGSize(width: naturalSize.height, height: naturalSize.width)
-                            }
+                        let correctedSize: CGSize
+                        if let t = transform, t.a == 0 && t.d == 0 {
+                            // Video is rotated 90 or 270 degrees
+                            correctedSize = CGSize(width: naturalSize.height, height: naturalSize.width)
+                        } else {
+                            correctedSize = naturalSize
                         }
                         await MainActor.run {
-                            self.videoSize = naturalSize
+                            self.videoSize = correctedSize
                         }
                     }
                 }
