@@ -408,6 +408,7 @@ struct ExportSettingsView: View {
                 clipDuration: appState.clipDuration,
                 count: appState.clipCount,
                 avoidCrossingScenes: appState.avoidCrossingScenes,
+                allowOverlapping: appState.allowOverlapping,
                 sceneRanges: scenes
             )
         }

@@ -152,6 +152,7 @@ struct ContentView: View {
                     clipDuration: appState.clipDuration,
                     count: appState.clipCount,
                     avoidCrossingScenes: appState.avoidCrossingScenes,
+                    allowOverlapping: appState.allowOverlapping,
                     sceneRanges: appState.detectedScenes
                 )
             }
@@ -163,6 +164,7 @@ struct ContentView: View {
                     clipDuration: appState.clipDuration,
                     count: appState.clipCount,
                     avoidCrossingScenes: appState.avoidCrossingScenes,
+                    allowOverlapping: appState.allowOverlapping,
                     sceneRanges: appState.detectedScenes
                 )
             }
@@ -174,6 +176,19 @@ struct ContentView: View {
                     clipDuration: appState.clipDuration,
                     count: appState.clipCount,
                     avoidCrossingScenes: appState.avoidCrossingScenes,
+                    allowOverlapping: appState.allowOverlapping,
+                    sceneRanges: appState.detectedScenes
+                )
+            }
+        }
+        .onChange(of: appState.allowOverlapping) { _ in
+            if appState.scenesDetected {
+                appState.clipRangeOverrides = sceneDetector.selectRandomClips(
+                    videoDuration: appState.videoDuration,
+                    clipDuration: appState.clipDuration,
+                    count: appState.clipCount,
+                    avoidCrossingScenes: appState.avoidCrossingScenes,
+                    allowOverlapping: appState.allowOverlapping,
                     sceneRanges: appState.detectedScenes
                 )
             }
@@ -232,72 +247,153 @@ struct ContentView: View {
     // MARK: - Video Loaded View
     private func videoLoadedView(videoURL: URL) -> some View {
         VStack(spacing: 0) {
-            // Video player section - fixed at top (outside ScrollView)
+            // Top section: video info + scene detection controls (fixed)
+            VStack(spacing: 12) {
+                videoHeader(videoURL: videoURL)
+                sceneDetectionControls
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+
+            // Video player section (fixed)
             if let player = playerController {
                 AutoVideoPlayerSection(player: player, clipRanges: appState.exportMovingClipsEnabled ? calculateMovingClipRanges() : [], videoHeight: $videoPlayerHeight)
 
                 // Drag divider for resizing video player
-                Rectangle()
-                    .fill(Color.gray.opacity(0.2))
-                    .frame(height: 6)
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(Color.gray.opacity(0.5))
-                            .frame(width: 40, height: 3)
-                    )
-                    .onHover { hovering in
-                        if hovering {
-                            NSCursor.resizeUpDown.push()
-                        } else {
-                            NSCursor.pop()
-                        }
-                    }
-                    .gesture(
-                        DragGesture()
-                            .onChanged { value in
-                                if videoDragStartHeight == nil {
-                                    videoDragStartHeight = videoPlayerHeight
-                                }
-                                videoPlayerHeight = max(120, min(600, (videoDragStartHeight ?? 300) + value.translation.height))
-                            }
-                            .onEnded { _ in
-                                videoDragStartHeight = nil
-                            }
-                    )
+                resizeDivider
             }
 
-            // Scrollable content
+            // Scrollable content: export settings
             ScrollView {
-                VStack(spacing: 16) {
-                    // Header with video info
-                    videoHeader(videoURL: videoURL)
+                VStack(spacing: 20) {
+                    // Export type toggle cards
+                    exportToggleCards
 
-                Divider()
-
-                // Export type checkboxes + settings
-                VStack(spacing: 16) {
-                    HStack(spacing: 24) {
-                        Toggle("Export Stills", isOn: $appState.exportStillsEnabled)
-                            .toggleStyle(.checkbox)
-                        Toggle("Export Clips", isOn: $appState.exportMovingClipsEnabled)
-                            .toggleStyle(.checkbox)
-                        Spacer()
-                    }
-                    .padding(.horizontal)
-
-                    // Detection settings (always visible)
+                    // Detection settings (stills + clips, conditional)
                     detectionSettingsSection
+
+                    Spacer().frame(height: 8)
                 }
+                .padding(.top, 12)
+            }
 
-                Spacer().frame(height: 8)
+            Divider()
 
-                // Action area
-                actionArea
+            // Bottom: Export button (fixed)
+            VStack(spacing: 8) {
+                if extractionComplete {
+                    completionView
+                } else {
+                    extractButton
 
-                Spacer().frame(height: 8)
+                    Label("Files are always added — never overwritten", systemImage: "plus.circle")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 10)
+        }
+    }
+
+    // MARK: - Shared Resize Divider
+    private var resizeDivider: some View {
+        Rectangle()
+            .fill(Color.gray.opacity(0.2))
+            .frame(height: 6)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+            .overlay(
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.gray.opacity(0.5))
+                    .frame(width: 40, height: 3)
+            )
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.resizeUpDown.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        if videoDragStartHeight == nil {
+                            videoDragStartHeight = videoPlayerHeight
+                        }
+                        videoPlayerHeight = max(120, min(600, (videoDragStartHeight ?? 300) + value.translation.height))
+                    }
+                    .onEnded { _ in
+                        videoDragStartHeight = nil
+                    }
+            )
+    }
+
+    // MARK: - Scene Detection Controls (shared layout for above player)
+    private var sceneDetectionControls: some View {
+        VStack(spacing: 8) {
+            // Cut sensitivity slider
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Cut Sensitivity")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.clipkitBlue)
+
+                HStack(spacing: 4) {
+                    Text("More")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .frame(width: 32, alignment: .trailing)
+                    Slider(value: $appState.detectionThreshold, in: 0.10...0.70, step: 0.05)
+                        .tint(.clipkitBlue)
+                    Text("Fewer")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .frame(width: 36, alignment: .leading)
+                }
+            }
+
+            HStack(spacing: 12) {
+                Button(action: {
+                    guard let url = appState.videoURL else { return }
+                    appState.needsReanalysis = false
+                    detectScenesForTimeline(url: url, force: true)
+                }) {
+                    HStack(spacing: 6) {
+                        Label(
+                            appState.scenesDetected ? "Re-detect Scenes" : "Detect Scenes",
+                            systemImage: "wand.and.stars"
+                        )
+                        if appState.needsReanalysis {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.caption)
+                                .foregroundColor(.white)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(appState.needsReanalysis ? .orange : .clipkitBlue)
+                .controlSize(.regular)
+                .disabled(appState.isDetectingScenes)
+
+                Button(action: {
+                    appState.resetAll()
+                }) {
+                    Label("Reset All", systemImage: "arrow.counterclockwise")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+            }
+
+            if appState.needsReanalysis {
+                Label("Settings changed — re-detect to apply", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            } else if appState.scenesDetected {
+                Text("Re-detect to get different marker positions")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
         }
     }
@@ -407,23 +503,65 @@ struct ContentView: View {
         .cornerRadius(12)
     }
 
+    // MARK: - Export Toggle Cards
+    private var exportToggleCards: some View {
+        HStack(spacing: 12) {
+            exportToggleCard(
+                title: "Stills",
+                icon: "photo.on.rectangle",
+                isOn: $appState.exportStillsEnabled
+            )
+            exportToggleCard(
+                title: "Clips",
+                icon: "film",
+                isOn: $appState.exportMovingClipsEnabled
+            )
+        }
+        .padding(.horizontal)
+    }
+
+    private func exportToggleCard(title: String, icon: String, isOn: Binding<Bool>) -> some View {
+        Button {
+            isOn.wrappedValue.toggle()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 16))
+                    .foregroundColor(isOn.wrappedValue ? .clipkitBlue : .secondary)
+                    .frame(width: 20)
+                Text(title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundColor(isOn.wrappedValue ? .primary : .secondary)
+                Spacer()
+                Image(systemName: isOn.wrappedValue ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 18))
+                    .foregroundColor(isOn.wrappedValue ? .clipkitBlue : .secondary.opacity(0.5))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isOn.wrappedValue ? Color.clipkitLightBlue : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(isOn.wrappedValue ? Color.clipkitBlue : Color.gray.opacity(0.3), lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - Export Settings (stills & clips)
     private var detectionSettingsSection: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 24) {
             if appState.exportStillsEnabled {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("STILL DETECTION SETTINGS")
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(.clipkitBlue)
-
+                VStack(alignment: .leading, spacing: 12) {
+                    // Section header with re-roll button
                     HStack {
-                        Text("Number of stills:")
-                        TextField("", value: $appState.stillCount, format: .number)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 60)
-                            .multilineTextAlignment(.center)
-                        Stepper("", value: $appState.stillCount, in: 1...100)
-                            .labelsHidden()
+                        Text("Still Detection")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.clipkitBlue)
                         Spacer()
                         Button(action: {
                             guard appState.scenesDetected, let url = appState.videoURL else { return }
@@ -443,6 +581,17 @@ struct ContentView: View {
                     }
 
                     HStack {
+                        Text("Number of stills:")
+                        TextField("", value: $appState.stillCount, format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 60)
+                            .multilineTextAlignment(.center)
+                        Stepper("", value: $appState.stillCount, in: 1...100)
+                            .labelsHidden()
+                        Spacer()
+                    }
+
+                    HStack {
                         Text("Placement:")
                         Picker("", selection: $appState.stillPlacement) {
                             ForEach(StillPlacement.allCases, id: \.self) { placement in
@@ -459,20 +608,12 @@ struct ContentView: View {
             }
 
             if appState.exportMovingClipsEnabled {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("CLIP SETTINGS")
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(.clipkitBlue)
-
-                    // Number of clips
+                VStack(alignment: .leading, spacing: 12) {
+                    // Section header with re-roll button
                     HStack {
-                        Text("Number of clips:")
-                        TextField("", value: $appState.clipCount, format: .number)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 60)
-                            .multilineTextAlignment(.center)
-                        Stepper("", value: $appState.clipCount, in: 1...50)
-                            .labelsHidden()
+                        Text("Clip Detection")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.clipkitBlue)
                         Spacer()
                         Button(action: {
                             guard appState.scenesDetected else { return }
@@ -481,6 +622,7 @@ struct ContentView: View {
                                 clipDuration: appState.clipDuration,
                                 count: appState.clipCount,
                                 avoidCrossingScenes: appState.avoidCrossingScenes,
+                                allowOverlapping: appState.allowOverlapping,
                                 sceneRanges: appState.detectedScenes
                             )
                         }) {
@@ -495,6 +637,18 @@ struct ContentView: View {
                         .controlSize(.small)
                         .help("Re-roll: randomize clip positions")
                         .disabled(!appState.scenesDetected)
+                    }
+
+                    // Number of clips
+                    HStack {
+                        Text("Number of clips:")
+                        TextField("", value: $appState.clipCount, format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 60)
+                            .multilineTextAlignment(.center)
+                        Stepper("", value: $appState.clipCount, in: 1...50)
+                            .labelsHidden()
+                        Spacer()
                     }
 
                     // Duration slider
@@ -522,17 +676,18 @@ struct ContentView: View {
                         .foregroundColor(.clipkitBlue)
                     }
 
-                    // Avoid crossing scenes checkbox
-                    HStack {
+                    // Checkboxes
+                    VStack(alignment: .leading, spacing: 6) {
                         Toggle(isOn: $appState.avoidCrossingScenes) {
                             Text("Avoid crossing scenes")
                         }
                         .toggleStyle(.checkbox)
-                        Spacer()
+
+                        Toggle(isOn: $appState.allowOverlapping) {
+                            Text("Allow overlapping")
+                        }
+                        .toggleStyle(.checkbox)
                     }
-                    Text("When checked, clips won't span across detected scene boundaries.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 }
             }
         }
@@ -721,17 +876,9 @@ struct ContentView: View {
     }
 
     private func calculateMovingClipRanges() -> [(start: Double, duration: Double)] {
-        if let overrides = appState.clipRangeOverrides {
-            return overrides
-        }
-        guard appState.videoDuration > 0 else { return [] }
-        return sceneDetector.selectRandomClips(
-            videoDuration: appState.videoDuration,
-            clipDuration: appState.clipDuration,
-            count: appState.clipCount,
-            avoidCrossingScenes: appState.avoidCrossingScenes,
-            sceneRanges: appState.detectedScenes
-        )
+        // Always use cached overrides — never generate random clips during view body
+        // (generating random in body causes different results on every SwiftUI redraw)
+        return appState.clipRangeOverrides ?? []
     }
 
     private func reinitializeStillPositions(url: URL) {
@@ -829,6 +976,7 @@ struct ContentView: View {
                         clipDuration: appState.clipDuration,
                         count: appState.clipCount,
                         avoidCrossingScenes: appState.avoidCrossingScenes,
+                        allowOverlapping: appState.allowOverlapping,
                         sceneRanges: scenes
                     )
                 }
@@ -884,6 +1032,7 @@ struct ContentView: View {
                             clipDuration: appState.clipDuration,
                             count: appState.clipCount,
                             avoidCrossingScenes: appState.avoidCrossingScenes,
+                            allowOverlapping: appState.allowOverlapping,
                             sceneRanges: appState.detectedScenes
                         )
                     }
@@ -1014,7 +1163,8 @@ struct ExtractionTimelineView: View {
 
     // Selected marker for snap behavior
     @State private var selectedMarkerIndex: Int? = nil
-    private let snapThresholdPx: CGFloat = 18
+    @State private var isDragging: Bool = false
+    private let snapThresholdPx: CGFloat = 12
 
     // Marker colors
     private let stillColor = Color.orange
@@ -1092,15 +1242,27 @@ struct ExtractionTimelineView: View {
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         let x = value.location.x
-                        if let snapIndex = nearestStillIndex(at: x, width: width) {
+                        let movement = sqrt(pow(value.translation.width, 2) + pow(value.translation.height, 2))
+
+                        // Once dragging is detected, stay in drag mode for this gesture
+                        if movement > 3 {
+                            isDragging = true
+                        }
+
+                        if !isDragging, let snapIndex = nearestStillIndex(at: x, width: width) {
+                            // Click near a marker: snap to it
                             selectedMarkerIndex = snapIndex
                             onSeek(stillPositions[snapIndex])
                         } else {
+                            // Dragging: free-form seeking, no snapping
                             selectedMarkerIndex = nil
                             let newTime = (x / width) * duration
                             let clampedTime = max(0, min(duration, newTime))
                             onSeek(clampedTime)
                         }
+                    }
+                    .onEnded { _ in
+                        isDragging = false
                     }
             )
         }

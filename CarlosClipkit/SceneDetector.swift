@@ -421,37 +421,38 @@ class SceneDetector {
         clipDuration: Double,
         count: Int,
         avoidCrossingScenes: Bool = false,
+        allowOverlapping: Bool = false,
         sceneRanges: [(start: Double, end: Double)] = []
     ) -> [(start: Double, duration: Double)] {
         guard videoDuration > clipDuration, count > 0 else { return [] }
 
-        let margin = 0.3
-        let usableStart = margin
-        let usableEnd = videoDuration - margin
-
-        // Build valid placement zones
+        // Build valid placement zones (clips align exactly with scene boundaries)
         var validZones: [(start: Double, end: Double)] = []
 
         if avoidCrossingScenes && !sceneRanges.isEmpty {
             for scene in sceneRanges {
-                let zoneStart = max(usableStart, scene.start + 0.1)
-                let zoneEnd = scene.end - clipDuration - 0.1
-                if zoneEnd > zoneStart {
-                    validZones.append((start: zoneStart, end: zoneEnd))
+                let zoneEnd = scene.end - clipDuration
+                if zoneEnd > scene.start {
+                    validZones.append((start: scene.start, end: zoneEnd))
                 }
             }
         } else {
-            let zoneEnd = usableEnd - clipDuration
-            if zoneEnd > usableStart {
-                validZones.append((start: usableStart, end: zoneEnd))
+            let zoneEnd = videoDuration - clipDuration
+            if zoneEnd > 0 {
+                validZones.append((start: 0, end: zoneEnd))
             }
         }
 
         guard !validZones.isEmpty else { return [] }
 
         let totalZoneLength = validZones.reduce(0.0) { $0 + ($1.end - $1.start) }
-        let maxClips = Int(totalZoneLength / clipDuration)
-        let targetCount = min(count, max(1, maxClips))
+        let targetCount: Int
+        if allowOverlapping {
+            targetCount = count
+        } else {
+            let maxClips = Int(totalZoneLength / clipDuration)
+            targetCount = min(count, max(1, maxClips))
+        }
 
         // Generate random non-overlapping start times via rejection sampling
         var placements: [Double] = []
@@ -477,15 +478,18 @@ class SceneDetector {
 
             guard let startTime = chosenStart else { continue }
 
-            // Check for overlap with existing placements
-            let overlaps = placements.contains { existing in
-                let existingEnd = existing + clipDuration
-                let newEnd = startTime + clipDuration
-                return startTime < existingEnd && newEnd > existing
-            }
-
-            if !overlaps {
+            // Check for overlap with existing placements (skip if overlapping allowed)
+            if allowOverlapping {
                 placements.append(startTime)
+            } else {
+                let overlaps = placements.contains { existing in
+                    let existingEnd = existing + clipDuration
+                    let newEnd = startTime + clipDuration
+                    return startTime < existingEnd && newEnd > existing
+                }
+                if !overlaps {
+                    placements.append(startTime)
+                }
             }
         }
 

@@ -29,6 +29,11 @@ struct ManualMarkingView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Top: Scene detection controls (above player)
+            manualSceneDetectionControls
+                .padding(.horizontal)
+                .padding(.bottom, 8)
+
             // Video Player
             videoPlayerSection
 
@@ -53,8 +58,18 @@ struct ManualMarkingView: View {
 
             Divider()
 
-            // Bottom actions
-            bottomActions
+            // Bottom: Export button only
+            VStack(spacing: 8) {
+                Button("Export...") {
+                    showExportSheet = true
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.clipkitBlue)
+                .controlSize(.large)
+                .frame(maxWidth: .infinity)
+                .disabled(!markingState.hasMarkedItems)
+            }
+            .padding()
         }
         .onAppear {
             // Reuse cached scene cuts from appState if available
@@ -472,7 +487,56 @@ struct ManualMarkingView: View {
         }
     }
 
-    // MARK: - Bottom Actions
+    // MARK: - Scene Detection Controls (above player)
+    private var manualSceneDetectionControls: some View {
+        VStack(spacing: 8) {
+            // Cut sensitivity slider
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Cut Sensitivity")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.clipkitBlue)
+
+                HStack(spacing: 4) {
+                    Text("More")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .frame(width: 32, alignment: .trailing)
+                    Slider(value: $appState.detectionThreshold, in: 0.10...0.70, step: 0.05)
+                        .tint(.clipkitBlue)
+                    Text("Fewer")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .frame(width: 36, alignment: .leading)
+                }
+            }
+
+            HStack(spacing: 12) {
+                Button(action: { detectScenes() }) {
+                    Label(
+                        appState.scenesDetected ? "Re-detect Scenes" : "Detect Scenes",
+                        systemImage: "wand.and.stars"
+                    )
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.clipkitBlue)
+                .controlSize(.regular)
+                .disabled(isDetectingScenes)
+
+                Button(action: {
+                    markingState.clearAll()
+                    appState.resetAll()
+                }) {
+                    Label("Reset All", systemImage: "arrow.counterclockwise")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+            }
+        }
+    }
+
+    // MARK: - Bottom Actions (legacy, no longer used from body)
 
     private var bottomActions: some View {
         VStack(spacing: 12) {

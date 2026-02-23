@@ -165,6 +165,7 @@ class AppState: ObservableObject {
     @Published var clipDuration: Double = 5.0
     @Published var clipCount: Int = 5
     @Published var avoidCrossingScenes: Bool = false
+    @Published var allowOverlapping: Bool = false
     @Published var gifFrameRate: Int = 15
     @Published var gifResolution: GIFResolution = .small
     @Published var clipFormat: OutputFormat = .mp4
@@ -378,6 +379,7 @@ class AppState: ObservableObject {
         clipDuration = 5.0
         clipCount = 5
         avoidCrossingScenes = false
+        allowOverlapping = false
         gifFrameRate = 15
         gifResolution = .small
         clipFormat = .mp4
