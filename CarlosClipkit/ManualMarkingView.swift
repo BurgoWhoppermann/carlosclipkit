@@ -19,6 +19,7 @@ struct ManualMarkingView: View {
     @State private var videoPlayerHeight: CGFloat = 300
     @State private var videoDragStartHeight: CGFloat? = nil
     @State private var showVolumeSlider = false
+    @State private var selectedStillId: UUID? = nil
 
     private let sceneDetector = SceneDetector()
 
@@ -44,7 +45,7 @@ struct ManualMarkingView: View {
                     ProgressView(value: appState.detectionProgress)
                         .tint(.clipkitBlue)
                     Text(appState.detectionStatusMessage.isEmpty
-                         ? "Detecting scene cuts… \(Int(appState.detectionProgress * 100))%"
+                         ? "Detecting cuts… \(Int(appState.detectionProgress * 100))%"
                          : appState.detectionStatusMessage)
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -76,7 +77,7 @@ struct ManualMarkingView: View {
 
             // Bottom: Export button only
             VStack(spacing: 8) {
-                Button("Export...") {
+                Button("Export Settings...") {
                     showExportSheet = true
                 }
                 .buttonStyle(.borderedProminent)
@@ -88,8 +89,8 @@ struct ManualMarkingView: View {
             .padding()
         }
         .onAppear {
-            // Reuse cached scene cuts from appState if available
-            if markingState.detectedCuts.isEmpty && !appState.sceneCutTimestamps.isEmpty {
+            // Always sync cached cuts from appState
+            if !appState.sceneCutTimestamps.isEmpty {
                 markingState.detectedCuts = appState.sceneCutTimestamps
             } else if markingState.detectedCuts.isEmpty {
                 detectScenes()
@@ -309,14 +310,6 @@ struct ManualMarkingView: View {
                         .foregroundColor(.secondary)
                 }
 
-                Divider()
-                    .frame(height: 20)
-                    .padding(.horizontal, 4)
-
-                Text("\(playerController.formattedCurrentTime) / \(playerController.formattedDuration)")
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundColor(.secondary)
-
                 Spacer()
 
                 // Action keycaps — clickable + keyboard-responsive
@@ -360,9 +353,14 @@ struct ManualMarkingView: View {
                 },
                 onStillRemoved: { id in
                     markingState.removeStill(id: id)
+                    if selectedStillId == id { selectedStillId = nil }
                 },
                 onClipRangeChanged: { id, newIn, newOut in
                     markingState.updateClipRange(id: id, inPoint: newIn, outPoint: newOut, snapEnabled: appState.snapToSceneCuts)
+                },
+                selectedStillId: selectedStillId,
+                onStillSelected: { id in
+                    selectedStillId = id
                 }
             )
 
@@ -598,7 +596,7 @@ struct ManualMarkingView: View {
             HStack(spacing: 12) {
                 Button(action: { detectScenes() }) {
                     Label(
-                        appState.scenesDetected ? "Re-detect Scenes" : "Detect Scenes",
+                        appState.scenesDetected ? "Re-detect Cuts" : "Detect Cuts",
                         systemImage: "wand.and.stars"
                     )
                     .frame(maxWidth: .infinity)
@@ -649,7 +647,7 @@ struct ManualMarkingView: View {
             HStack(spacing: 12) {
                 Button(action: { detectScenes() }) {
                     Label(
-                        appState.scenesDetected ? "Re-detect Scenes" : "Detect Scenes",
+                        appState.scenesDetected ? "Re-detect Cuts" : "Detect Cuts",
                         systemImage: "wand.and.stars"
                     )
                     .frame(maxWidth: .infinity)
@@ -671,7 +669,7 @@ struct ManualMarkingView: View {
             }
 
             // Export button
-            Button("Export...") {
+            Button("Export Settings...") {
                 showExportSheet = true
             }
             .buttonStyle(.borderedProminent)
@@ -707,6 +705,12 @@ struct ManualMarkingView: View {
 
         case .undo:
             markingState.undo()
+
+        case .delete:
+            if let id = selectedStillId {
+                markingState.removeStill(id: id)
+                selectedStillId = nil
+            }
         }
     }
 
@@ -720,26 +724,18 @@ struct ManualMarkingView: View {
     }
 
     private func transferAutoMarksIfNeeded() {
-        guard !markingState.hasMarkedItems else { return }
-
-        // Transfer still positions as editable MarkedStill entries
+        // Always sync auto-generated positions into manual editing mode
         if !appState.stillPositions.isEmpty {
-            for timestamp in appState.stillPositions {
-                markingState.addStill(at: timestamp)
-            }
+            markingState.markedStills = appState.stillPositions.map { MarkedStill(timestamp: $0) }
         }
 
-        // Transfer clip/GIF ranges as editable MarkedClip entries (use cached ranges)
         if let ranges = appState.clipRangeOverrides, !ranges.isEmpty {
-            for range in ranges {
-                markingState.markedClips.append(
-                    MarkedClip(inPoint: range.start, outPoint: range.start + range.duration)
-                )
-            }
-            markingState.markedClips.sort { $0.inPoint < $1.inPoint }
+            markingState.markedClips = ranges.map {
+                MarkedClip(inPoint: $0.start, outPoint: $0.start + $0.duration)
+            }.sorted { $0.inPoint < $1.inPoint }
         }
 
-        // Clear undo stack — transferred marks shouldn't be undoable
+        // Clear undo stack — synced marks shouldn't be undoable
         markingState.undoStack.removeAll()
     }
 
@@ -805,6 +801,8 @@ struct ManualTimelineView: View {
     let onStillPositionChanged: (UUID, Double) -> Void
     let onStillRemoved: (UUID) -> Void
     let onClipRangeChanged: (UUID, Double?, Double?) -> Void
+    var selectedStillId: UUID? = nil
+    var onStillSelected: ((UUID?) -> Void)? = nil
 
     // Drag state (separate offsets prevent clip operations from leaking into still drags)
     @State private var draggingStillId: UUID? = nil
@@ -812,6 +810,10 @@ struct ManualTimelineView: View {
     @State private var draggingClipEdge: ClipEdge? = nil
     @State private var stillDragOffset: CGFloat = 0
     @State private var clipDragOffset: CGFloat = 0
+
+    // Selection state
+    @State private var isDragging: Bool = false
+    private let snapThresholdPx: CGFloat = 12
 
     // Hover state
     @State private var hoveredStillId: UUID? = nil
@@ -965,18 +967,24 @@ struct ManualTimelineView: View {
                         .zIndex(15)
                 }
 
-                // Still markers (orange dots - draggable)
+                // Still markers (orange dots - draggable, selectable)
                 ForEach(markedStills) { still in
                     let baseX = xPosition(for: still.timestamp, width: width)
                     let isDragging = draggingStillId == still.id
                     let isHovered = hoveredStillId == still.id
+                    let isSelected = selectedStillId == still.id
                     let currentX = isDragging ? baseX + stillDragOffset : baseX
-                    let size: CGFloat = isDragging ? 14 : (isHovered ? 12 : 10)
+                    let size: CGFloat = isDragging ? 14 : (isSelected ? 14 : (isHovered ? 12 : 10))
 
                     Circle()
                         .fill(stillColor)
                         .frame(width: size, height: size)
-                        .shadow(color: (isDragging || isHovered) ? stillColor.opacity(0.6) : .clear, radius: 4)
+                        .overlay(
+                            Circle()
+                                .strokeBorder(Color.white, lineWidth: isSelected ? 2 : 0)
+                                .frame(width: size, height: size)
+                        )
+                        .shadow(color: (isDragging || isHovered || isSelected) ? stillColor.opacity(0.8) : .clear, radius: isSelected ? 6 : 4)
                         .animation(.easeInOut(duration: 0.15), value: isHovered)
                         .frame(width: 30, height: 44)
                         .contentShape(Rectangle())
@@ -1017,7 +1025,8 @@ struct ManualTimelineView: View {
                                 }
                         )
                         .position(x: currentX, y: 22)
-                        .zIndex(isDragging ? 100 : (isHovered ? 50 : 10))
+                        .zIndex(isDragging ? 100 : (isSelected ? 50 : (isHovered ? 50 : 10)))
+                        .animation(.easeInOut(duration: 0.15), value: isSelected)
                 }
 
                 // Playhead (current position) - highest z-index
@@ -1043,12 +1052,45 @@ struct ManualTimelineView: View {
                 DragGesture(minimumDistance: 0, coordinateSpace: .named("timeline"))
                     .onChanged { value in
                         guard draggingStillId == nil && draggingClipId == nil else { return }
-                        let newTime = (Double(value.location.x) / Double(width)) * duration
-                        onSeek(max(0, min(duration, newTime)))
+                        let x = value.location.x
+                        let movement = sqrt(pow(value.translation.width, 2) + pow(value.translation.height, 2))
+
+                        if movement > 3 {
+                            isDragging = true
+                        }
+
+                        if !isDragging, let snapId = nearestStillId(at: x, width: width) {
+                            onStillSelected?(snapId)
+                            if let still = markedStills.first(where: { $0.id == snapId }) {
+                                onSeek(still.timestamp)
+                            }
+                        } else {
+                            if isDragging { onStillSelected?(nil) }
+                            let newTime = (Double(x) / Double(width)) * duration
+                            onSeek(max(0, min(duration, newTime)))
+                        }
+                    }
+                    .onEnded { _ in
+                        isDragging = false
                     }
             )
         }
         .frame(height: 44)
+    }
+
+    private func nearestStillId(at xPosition: CGFloat, width: CGFloat) -> UUID? {
+        guard !markedStills.isEmpty, width > 0 else { return nil }
+        var bestId: UUID? = nil
+        var bestDistance: CGFloat = .greatestFiniteMagnitude
+        for still in markedStills {
+            let markerX = self.xPosition(for: still.timestamp, width: width)
+            let distance = abs(xPosition - markerX)
+            if distance < snapThresholdPx && distance < bestDistance {
+                bestDistance = distance
+                bestId = still.id
+            }
+        }
+        return bestId
     }
 
     private func xPosition(for time: Double, width: CGFloat) -> CGFloat {

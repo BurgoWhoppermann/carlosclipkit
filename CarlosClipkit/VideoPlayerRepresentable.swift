@@ -15,6 +15,7 @@ struct VideoPlayerRepresentable: NSViewRepresentable {
         case playPause      // Space
         case cancelIn       // Escape
         case undo           // Cmd+Z
+        case delete         // Delete / Backspace
     }
 
     func makeNSView(context: Context) -> KeyCapturePlayerView {
@@ -77,6 +78,8 @@ class KeyCapturePlayerView: AVPlayerView {
         default:
             if event.keyCode == 53 { // Escape
                 keyPressHandler?(.cancelIn)
+            } else if event.keyCode == 51 || event.keyCode == 117 { // Backspace / Forward Delete
+                keyPressHandler?(.delete)
             } else {
                 super.keyDown(with: event)
             }
