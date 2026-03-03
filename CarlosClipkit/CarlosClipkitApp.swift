@@ -14,23 +14,23 @@ enum OutputFormat: String, CaseIterable {
 }
 
 enum GIFResolution: String, CaseIterable {
-    case tiny = "320w"
     case small = "480w"
-    case medium = "640w"
+    case hd720 = "720p"
+    case hd1080 = "1080p"
 
     var maxWidth: Int {
         switch self {
-        case .tiny: return 320
         case .small: return 480
-        case .medium: return 640
+        case .hd720: return 1280
+        case .hd1080: return 1920
         }
     }
 
     var displayName: String {
         switch self {
-        case .tiny: return "320w (Tiny)"
         case .small: return "480w (Small)"
-        case .medium: return "640w (Medium)"
+        case .hd720: return "720p (HD)"
+        case .hd1080: return "1080p (Full HD)"
         }
     }
 
@@ -58,18 +58,18 @@ enum StillFormat: String, CaseIterable {
 }
 
 enum StillPlacement: String, CaseIterable {
-    case sceneWeighted = "Per scene"
     case spreadEvenly = "Spread evenly"
-    case preferFaces = "Prefer faces in focus"
+    case perScene = "Per scene"
+    case preferFaces = "Prefer faces"
 
     var description: String {
         switch self {
-        case .sceneWeighted:
-            return "Places stills proportionally across detected scenes."
         case .spreadEvenly:
-            return "Distributes stills at equal intervals across the entire video."
+            return "Distributes stills at equal intervals with some randomness."
+        case .perScene:
+            return "Places a fixed number of stills in every scene."
         case .preferFaces:
-            return "Spreads evenly, then shifts each still to the sharpest nearby frame with a face."
+            return "One still per scene, picking the sharpest frame with a face. Skips scenes without faces."
         }
     }
 }
@@ -190,6 +190,7 @@ class AppState: ObservableObject {
     @Published var allowOverlapping: Bool = false
     @Published var gifFrameRate: Int = 15
     @Published var gifResolution: GIFResolution = .small
+    @Published var gifQuality: Double = 0.7
     @Published var clipFormat: OutputFormat = .mp4
     @Published var clipQuality: ClipQuality = .source
 
@@ -268,11 +269,14 @@ class AppState: ObservableObject {
     ///   - count: Number of stills to position
     func initializeStillPositions(from scenes: [(start: Double, end: Double)], count: Int) {
         switch stillPlacement {
-        case .sceneWeighted:
-            let detector = SceneDetector()
-            stillPositions = detector.selectTimestampsAcrossScenes(sceneRanges: scenes, count: count)
-        case .spreadEvenly, .preferFaces:
+        case .spreadEvenly:
             stillPositions = distributeEvenlyAcrossVideo(count: count)
+        case .perScene:
+            let detector = SceneDetector()
+            stillPositions = detector.selectTimestampsPerScene(sceneRanges: scenes, countPerScene: count)
+        case .preferFaces:
+            // Positions are set asynchronously by findBestFacePerScene — leave empty for now
+            stillPositions = []
         }
     }
 

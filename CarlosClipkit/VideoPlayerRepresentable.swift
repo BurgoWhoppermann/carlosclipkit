@@ -16,6 +16,8 @@ struct VideoPlayerRepresentable: NSViewRepresentable {
         case cancelIn       // Escape
         case undo           // Cmd+Z
         case delete         // Delete / Backspace
+        case jumpToPreviousMarker  // ↑ arrow
+        case jumpToNextMarker      // ↓ arrow
     }
 
     func makeNSView(context: Context) -> KeyCapturePlayerView {
@@ -56,6 +58,18 @@ class KeyCapturePlayerView: AVPlayerView {
         DispatchQueue.main.async { [weak self] in
             self?.window?.makeFirstResponder(self)
         }
+    }
+
+    // Arrow keys are intercepted by AVPlayerView's performKeyEquivalent before keyDown
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.keyCode == 126 { // Up arrow → previous marker
+            keyPressHandler?(.jumpToPreviousMarker)
+            return true
+        } else if event.keyCode == 125 { // Down arrow → next marker
+            keyPressHandler?(.jumpToNextMarker)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
     }
 
     override func keyDown(with event: NSEvent) {

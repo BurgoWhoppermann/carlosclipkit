@@ -44,27 +44,44 @@ struct BetaSplashView: View {
                         .font(.headline)
                         .foregroundColor(.clipkitBlue)
 
-                    changeGroup("Playback Controls", items: [
-                        "Redesigned play & volume buttons — larger floating circles on the video",
-                        "Volume slider — click the speaker icon to adjust",
-                        "Play button now works in manual mode"
+                    changeGroup("Face Detection", items: [
+                        "\"Prefer faces\" now prompts to run cut detection first",
+                        "Face search progress bar with scene-by-scene status",
+                        "Results are cached — switching modes doesn't re-scan"
                     ])
 
-                    changeGroup("Scene Detection", items: [
-                        "Progress bar now shows in manual mode during detection",
-                        "\"Prefer faces\" no longer auto-runs — click Re-generate to refine",
-                        "Fixed still markers clustering when using face refinement"
+                    changeGroup("GIF & Export", items: [
+                        "New GIF resolutions: 480w, 720p, 1080p",
+                        "GIF quality slider (30–100%)",
+                        "Export respects GIF / video clip toggles correctly"
                     ])
 
-                    changeGroup("UI Polish", items: [
-                        "Compact inline controls — count, re-generate, duration on fewer rows",
-                        "Export toggle cards replace checkboxes",
-                        "Both modes share a consistent layout",
-                        "Filename and controls overlay on the video player"
+                    changeGroup("UI Improvements", items: [
+                        "Compact controls bar — legend merged into one row",
+                        "Smart still counts when switching placement modes",
+                        "Arrow keys scrub ±1 frame, Shift+arrow ±10 frames"
                     ])
                 }
                 .padding(24)
             }
+
+            // Bug report link
+            Button(action: {
+                if let url = URL(string: "mailto:mail@carlooppermann.com?subject=Clipkit%20Bug%20Report") {
+                    NSWorkspace.shared.open(url)
+                }
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "envelope")
+                        .font(.caption)
+                    Text("Found a bug? Email me at mail@carlooppermann.com")
+                        .font(.caption)
+                }
+                .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 8)
 
             Divider()
                 .padding(.horizontal, 24)

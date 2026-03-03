@@ -160,7 +160,8 @@ class VideoProcessor {
         index: Int,
         videoName: String,
         outputDirectory: URL,
-        format: StillFormat = .jpeg
+        format: StillFormat = .jpeg,
+        subdirectory: String = "stills"
     ) throws {
         let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
 
@@ -186,8 +187,8 @@ class VideoProcessor {
             throw ProcessingError.cannotCreateImage
         }
 
-        // Save to stills/ subdirectory
-        let stillsDir = ensureSubdirectory(outputDirectory, path: "stills")
+        // Save to the specified subdirectory (stills/, stills/4x5/, stills/9x16/)
+        let stillsDir = ensureSubdirectory(outputDirectory, path: subdirectory)
         let filename = String(format: "%@_still_%03d.\(format.fileExtension)", videoName, index + 1)
         let fileURL = stillsDir.appendingPathComponent(filename)
 
@@ -211,7 +212,7 @@ class VideoProcessor {
         }
 
         guard let results = request.results else { return false }
-        return results.contains { $0.confidence > 0.5 }
+        return results.contains { $0.confidence > 0.3 }
     }
 
     /// Compute sharpness using Laplacian variance on a downsampled grayscale image
@@ -318,6 +319,72 @@ class VideoProcessor {
         let timestamps: [Double]
         let shiftedCount: Int    // frames that moved to find a face/sharper frame
         let originalCount: Int   // how many we started with
+    }
+
+    /// For each scene, sample frames and pick the sharpest one with a detected face.
+    /// Scenes with no face detected are skipped entirely.
+    func findBestFacePerScene(
+        from videoURL: URL,
+        scenes: [(start: Double, end: Double)],
+        progress: @escaping (Double, String) -> Void
+    ) async -> [Double] {
+        let asset = AVURLAsset(url: videoURL)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        // Relax tolerance — exact frames unnecessary for face detection
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.1, preferredTimescale: 600)
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.1, preferredTimescale: 600)
+        // Limit frame size — 1280px wide is plenty for face detection
+        generator.maximumSize = CGSize(width: 1280, height: 0)
+        defer { generator.cancelAllCGImageGeneration() }
+
+        var results: [Double] = []
+
+        for (index, scene) in scenes.enumerated() {
+            if Task.isCancelled { break }
+            progress(Double(index) / Double(scenes.count),
+                     "Searching scene for faces \(index + 1) of \(scenes.count)...")
+
+            let duration = scene.end - scene.start
+            // Sample every ~0.3s, minimum 3 samples, cap at 30 per scene
+            let sampleCount = max(3, min(30, Int(duration / 0.3)))
+            let step = duration / Double(sampleCount + 1)
+
+            var bestFace: (time: Double, sharpness: Double)? = nil
+            var framesExtracted = 0
+            var facesFound = 0
+
+            for i in 1...sampleCount {
+                if Task.isCancelled { break }
+                let t = scene.start + step * Double(i)
+                let cmTime = CMTime(seconds: t, preferredTimescale: 600)
+
+                do {
+                    let (cgImage, _) = try await generator.image(at: cmTime)
+                    framesExtracted += 1
+                    guard hasFace(in: cgImage) else { continue }
+                    facesFound += 1
+                    let sharpness = computeSharpness(of: cgImage)
+                    if bestFace == nil || sharpness > bestFace!.sharpness {
+                        bestFace = (time: t, sharpness: sharpness)
+                    }
+                } catch {
+                    print("[Prefer Faces] Frame extraction failed at \(String(format: "%.2f", t))s: \(error.localizedDescription)")
+                    continue
+                }
+            }
+
+            print("[Prefer Faces] Scene \(index + 1): \(framesExtracted)/\(sampleCount) frames extracted, \(facesFound) faces found")
+
+            if let best = bestFace {
+                results.append(best.time)
+            }
+            // No face found → skip this scene
+        }
+
+        print("[Prefer Faces] Total: \(results.count) stills from \(scenes.count) scenes")
+        progress(1.0, "Face search complete")
+        return results.sorted()
     }
 
     /// Refine candidate timestamps by finding the sharpest face-containing frame nearby.
@@ -440,12 +507,36 @@ class VideoProcessor {
     ///   - timestamps: Array of exact timestamps to extract
     ///   - outputDirectory: Where to save the stills
     ///   - progress: Progress callback
+    /// Center-crop a CGImage to the specified aspect ratio
+    private func cropImageToAspectRatio(_ image: CGImage, targetRatio: CGFloat) -> CGImage {
+        let imageWidth = CGFloat(image.width)
+        let imageHeight = CGFloat(image.height)
+        let currentRatio = imageWidth / imageHeight
+
+        let cropRect: CGRect
+        if currentRatio > targetRatio {
+            // Image is wider than target — crop sides
+            let newWidth = imageHeight * targetRatio
+            let xOffset = (imageWidth - newWidth) / 2
+            cropRect = CGRect(x: xOffset, y: 0, width: newWidth, height: imageHeight)
+        } else {
+            // Image is taller than target — crop top/bottom
+            let newHeight = imageWidth / targetRatio
+            let yOffset = (imageHeight - newHeight) / 2
+            cropRect = CGRect(x: 0, y: yOffset, width: imageWidth, height: newHeight)
+        }
+
+        return image.cropping(to: cropRect) ?? image
+    }
+
     func extractStillsAtTimestamps(
         from videoURL: URL,
         timestamps: [Double],
         to outputDirectory: URL,
         scale: Double = 1.0,
         format: StillFormat = .jpeg,
+        export4x5: Bool = false,
+        export9x16: Bool = false,
         progress: @escaping (Double, String) -> Void = { _, _ in }
     ) async throws {
         guard !timestamps.isEmpty else { return }
@@ -477,7 +568,21 @@ class VideoProcessor {
                 if scale < 1.0 {
                     cgImage = scaleImage(cgImage, scale: scale)
                 }
+
+                // Save original
                 try saveFrame(cgImage, index: index, videoName: videoName, outputDirectory: outputDirectory, format: format)
+
+                // Save 4:5 crop variant
+                if export4x5 {
+                    let cropped = cropImageToAspectRatio(cgImage, targetRatio: 4.0 / 5.0)
+                    try saveFrame(cropped, index: index, videoName: videoName, outputDirectory: outputDirectory, format: format, subdirectory: "stills/4x5")
+                }
+
+                // Save 9:16 crop variant
+                if export9x16 {
+                    let cropped = cropImageToAspectRatio(cgImage, targetRatio: 9.0 / 16.0)
+                    try saveFrame(cropped, index: index, videoName: videoName, outputDirectory: outputDirectory, format: format, subdirectory: "stills/9x16")
+                }
             } catch {
                 throw ProcessingError.cannotGenerateImage(time: time)
             }

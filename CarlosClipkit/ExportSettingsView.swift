@@ -96,10 +96,6 @@ struct ExportSettingsView: View {
                         }
                         .padding(.leading, 20)
 
-                        Text("Color space: source video (sRGB / Rec. 709)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .padding(.leading, 20)
                     }
                 }
             }
@@ -143,6 +139,18 @@ struct ExportSettingsView: View {
                             }
                             .pickerStyle(.menu)
                             .frame(width: 100)
+                        }
+                        .padding(.leading, 20)
+
+                        HStack {
+                            Text("Quality:")
+                                .foregroundColor(.secondary)
+                            Slider(value: $appState.gifQuality, in: 0.3...1.0, step: 0.1)
+                                .tint(.clipkitBlue)
+                            Text("\(Int(appState.gifQuality * 100))%")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .frame(width: 35, alignment: .trailing)
                         }
                         .padding(.leading, 20)
 
@@ -320,7 +328,9 @@ struct ExportSettingsView: View {
                 timestamps: timestamps,
                 to: outputDir,
                 scale: appState.stillSize.scale,
-                format: appState.stillFormat
+                format: appState.stillFormat,
+                export4x5: appState.export4x5,
+                export9x16: appState.export9x16
             ) { progress, message in
                 Task { @MainActor in
                     let stillsProgress = progress * Double(markingState.markedStills.count) / Double(totalItems)
@@ -343,6 +353,9 @@ struct ExportSettingsView: View {
                 startTime: clip.inPoint,
                 duration: clip.duration,
                 resolution: appState.gifResolution,
+                gifQuality: appState.gifQuality,
+                exportGIF: appState.exportGIF,
+                exportMP4: appState.exportMP4,
                 format: appState.clipFormat,
                 to: outputDir,
                 export4x5: appState.export4x5,

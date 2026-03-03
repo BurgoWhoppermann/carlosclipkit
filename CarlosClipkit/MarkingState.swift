@@ -229,6 +229,16 @@ class MarkingState: ObservableObject {
         pendingInPoint = nil
     }
 
+    /// Clear only stills (for auto-regeneration without touching clips)
+    func clearStills() {
+        markedStills.removeAll()
+    }
+
+    /// Clear only clips (for auto-regeneration without touching stills)
+    func clearClips() {
+        markedClips.removeAll()
+    }
+
     /// Check if there's anything to export
     var hasMarkedItems: Bool {
         !markedStills.isEmpty || !markedClips.isEmpty

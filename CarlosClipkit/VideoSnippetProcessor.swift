@@ -213,6 +213,9 @@ class VideoSnippetProcessor {
         startTime: Double,
         duration: Double,
         resolution: GIFResolution,
+        gifQuality: Double = 0.7,
+        exportGIF: Bool = true,
+        exportMP4: Bool = true,
         format: OutputFormat,
         to outputDirectory: URL,
         export4x5: Bool = false,
@@ -228,102 +231,115 @@ class VideoSnippetProcessor {
 
         let videoName = videoURL.deletingPathExtension().lastPathComponent
 
-        // Create subdirectories
-        let videosDir = ensureSubdirectory(outputDirectory, path: "videos")
-        let gifsDir = ensureSubdirectory(outputDirectory, path: "gifs")
+        // Create subdirectories only when needed
+        let videosDir = exportMP4 ? ensureSubdirectory(outputDirectory, path: "videos") : outputDirectory
+        let gifsDir = exportGIF ? ensureSubdirectory(outputDirectory, path: "gifs") : outputDirectory
 
-        // Find next available index for both clip and GIF
-        let clipIndex = findNextAvailableIndex(in: videosDir, prefix: "\(videoName)_clip", suffix: ".\(format.fileType)")
-        let gifIndex = findNextAvailableIndex(in: gifsDir, prefix: "\(videoName)_clip", suffix: ".gif")
+        // Find next available index for consistent numbering
+        let clipIndex = exportMP4 ? findNextAvailableIndex(in: videosDir, prefix: "\(videoName)_clip", suffix: ".\(format.fileType)") : 1
+        let gifIndex = exportGIF ? findNextAvailableIndex(in: gifsDir, prefix: "\(videoName)_clip", suffix: ".gif") : 1
         let fileNumber = max(clipIndex, gifIndex)
 
         // Export original video clip
-        let clipFilename = String(format: "%@_clip_%03d.%@", videoName, fileNumber, format.fileType)
-        let clipURL = videosDir.appendingPathComponent(clipFilename)
+        if exportMP4 {
+            let clipFilename = String(format: "%@_clip_%03d.%@", videoName, fileNumber, format.fileType)
+            let clipURL = videosDir.appendingPathComponent(clipFilename)
 
-        try await exportClip(
-            from: asset,
-            startTime: startTime,
-            duration: duration,
-            format: format,
-            outputURL: clipURL,
-            presetName: presetName
-        )
-
-        // Export original GIF
-        let gifFilename = String(format: "%@_clip_%03d.gif", videoName, fileNumber)
-        let gifURL = gifsDir.appendingPathComponent(gifFilename)
-
-        try await createGIF(
-            from: asset,
-            startTime: startTime,
-            duration: duration,
-            frameRate: 15,
-            maxWidth: resolution.maxWidth,
-            outputURL: gifURL
-        )
-
-        // Export cropped versions if requested
-        if export4x5 {
-            let videos4x5Dir = ensureSubdirectory(videosDir, path: "4x5")
-            let gifs4x5Dir = ensureSubdirectory(gifsDir, path: "4x5")
-
-            let crop4x5ClipFilename = String(format: "%@_clip_%03d.%@", videoName, fileNumber, format.fileType)
-            let crop4x5ClipURL = videos4x5Dir.appendingPathComponent(crop4x5ClipFilename)
-
-            try await exportCroppedClip(
+            try await exportClip(
                 from: asset,
                 startTime: startTime,
                 duration: duration,
                 format: format,
-                aspectRatio: .ratio4x5,
-                outputURL: crop4x5ClipURL,
+                outputURL: clipURL,
                 presetName: presetName
-            )
-
-            let crop4x5GifFilename = String(format: "%@_clip_%03d.gif", videoName, fileNumber)
-            let crop4x5GifURL = gifs4x5Dir.appendingPathComponent(crop4x5GifFilename)
-
-            try await createCroppedGIF(
-                from: asset,
-                startTime: startTime,
-                duration: duration,
-                frameRate: 15,
-                maxWidth: resolution.maxWidth,
-                aspectRatio: .ratio4x5,
-                outputURL: crop4x5GifURL
             )
         }
 
-        if export9x16 {
-            let videos9x16Dir = ensureSubdirectory(videosDir, path: "9x16")
-            let gifs9x16Dir = ensureSubdirectory(gifsDir, path: "9x16")
+        // Export original GIF
+        if exportGIF {
+            let gifFilename = String(format: "%@_clip_%03d.gif", videoName, fileNumber)
+            let gifURL = gifsDir.appendingPathComponent(gifFilename)
 
-            let crop9x16ClipFilename = String(format: "%@_clip_%03d.%@", videoName, fileNumber, format.fileType)
-            let crop9x16ClipURL = videos9x16Dir.appendingPathComponent(crop9x16ClipFilename)
-
-            try await exportCroppedClip(
-                from: asset,
-                startTime: startTime,
-                duration: duration,
-                format: format,
-                aspectRatio: .ratio9x16,
-                outputURL: crop9x16ClipURL,
-                presetName: presetName
-            )
-
-            let crop9x16GifFilename = String(format: "%@_clip_%03d.gif", videoName, fileNumber)
-            let crop9x16GifURL = gifs9x16Dir.appendingPathComponent(crop9x16GifFilename)
-
-            try await createCroppedGIF(
+            try await createGIF(
                 from: asset,
                 startTime: startTime,
                 duration: duration,
                 frameRate: 15,
                 maxWidth: resolution.maxWidth,
-                aspectRatio: .ratio9x16,
-                outputURL: crop9x16GifURL
+                quality: gifQuality,
+                outputURL: gifURL
             )
+        }
+
+        // Export cropped versions if requested
+        if export4x5 {
+            if exportMP4 {
+                let videos4x5Dir = ensureSubdirectory(videosDir, path: "4x5")
+                let crop4x5ClipFilename = String(format: "%@_clip_%03d.%@", videoName, fileNumber, format.fileType)
+                let crop4x5ClipURL = videos4x5Dir.appendingPathComponent(crop4x5ClipFilename)
+
+                try await exportCroppedClip(
+                    from: asset,
+                    startTime: startTime,
+                    duration: duration,
+                    format: format,
+                    aspectRatio: .ratio4x5,
+                    outputURL: crop4x5ClipURL,
+                    presetName: presetName
+                )
+            }
+
+            if exportGIF {
+                let gifs4x5Dir = ensureSubdirectory(gifsDir, path: "4x5")
+                let crop4x5GifFilename = String(format: "%@_clip_%03d.gif", videoName, fileNumber)
+                let crop4x5GifURL = gifs4x5Dir.appendingPathComponent(crop4x5GifFilename)
+
+                try await createCroppedGIF(
+                    from: asset,
+                    startTime: startTime,
+                    duration: duration,
+                    frameRate: 15,
+                    maxWidth: resolution.maxWidth,
+                    quality: gifQuality,
+                    aspectRatio: .ratio4x5,
+                    outputURL: crop4x5GifURL
+                )
+            }
+        }
+
+        if export9x16 {
+            if exportMP4 {
+                let videos9x16Dir = ensureSubdirectory(videosDir, path: "9x16")
+                let crop9x16ClipFilename = String(format: "%@_clip_%03d.%@", videoName, fileNumber, format.fileType)
+                let crop9x16ClipURL = videos9x16Dir.appendingPathComponent(crop9x16ClipFilename)
+
+                try await exportCroppedClip(
+                    from: asset,
+                    startTime: startTime,
+                    duration: duration,
+                    format: format,
+                    aspectRatio: .ratio9x16,
+                    outputURL: crop9x16ClipURL,
+                    presetName: presetName
+                )
+            }
+
+            if exportGIF {
+                let gifs9x16Dir = ensureSubdirectory(gifsDir, path: "9x16")
+                let crop9x16GifFilename = String(format: "%@_clip_%03d.gif", videoName, fileNumber)
+                let crop9x16GifURL = gifs9x16Dir.appendingPathComponent(crop9x16GifFilename)
+
+                try await createCroppedGIF(
+                    from: asset,
+                    startTime: startTime,
+                    duration: duration,
+                    frameRate: 15,
+                    maxWidth: resolution.maxWidth,
+                    quality: gifQuality,
+                    aspectRatio: .ratio9x16,
+                    outputURL: crop9x16GifURL
+                )
+            }
         }
     }
 
@@ -443,6 +459,7 @@ class VideoSnippetProcessor {
         duration: Double,
         frameRate: Int,
         maxWidth: Int,
+        quality: Double = 0.7,
         aspectRatio: AspectRatioCrop,
         outputURL: URL
     ) async throws {
@@ -475,7 +492,8 @@ class VideoSnippetProcessor {
         let frameProperties: [String: Any] = [
             kCGImagePropertyGIFDictionary as String: [
                 kCGImagePropertyGIFDelayTime as String: delayTime
-            ]
+            ],
+            kCGImageDestinationLossyCompressionQuality as String: quality
         ]
 
         for frameIndex in 0..<frameCount {
@@ -527,6 +545,7 @@ class VideoSnippetProcessor {
         duration: Double,
         frameRate: Int,
         maxWidth: Int,
+        quality: Double = 0.7,
         outputURL: URL
     ) async throws {
         let frameCount = Int(duration * Double(frameRate))
@@ -558,7 +577,8 @@ class VideoSnippetProcessor {
         let frameProperties: [String: Any] = [
             kCGImagePropertyGIFDictionary as String: [
                 kCGImagePropertyGIFDelayTime as String: delayTime
-            ]
+            ],
+            kCGImageDestinationLossyCompressionQuality as String: quality
         ]
 
         for frameIndex in 0..<frameCount {

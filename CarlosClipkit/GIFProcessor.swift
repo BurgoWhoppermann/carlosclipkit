@@ -73,6 +73,7 @@ class GIFProcessor {
         clipSpecs: [(start: Double, duration: Double)],
         frameRate: Int,
         resolution: GIFResolution,
+        quality: Double = 0.7,
         to outputDirectory: URL,
         progress: @escaping (Double, String) -> Void
     ) async throws {
@@ -107,6 +108,7 @@ class GIFProcessor {
                 duration: spec.duration,
                 frameRate: frameRate,
                 maxWidth: resolution.maxWidth,
+                quality: quality,
                 outputURL: fileURL
             ) { frameProgress in
                 let overallProgress = gifProgress + (frameProgress / Double(totalCount))
@@ -123,6 +125,7 @@ class GIFProcessor {
         duration: Double,
         frameRate: Int,
         maxWidth: Int,
+        quality: Double,
         outputURL: URL,
         progress: @escaping (Double) -> Void
     ) async throws {
@@ -155,11 +158,12 @@ class GIFProcessor {
         ]
         CGImageDestinationSetProperties(destination, gifProperties as CFDictionary)
 
-        // Frame properties
+        // Frame properties with quality
         let frameProperties: [String: Any] = [
             kCGImagePropertyGIFDictionary as String: [
                 kCGImagePropertyGIFDelayTime as String: delayTime
-            ]
+            ],
+            kCGImageDestinationLossyCompressionQuality as String: quality
         ]
 
         // Extract frames and add to GIF

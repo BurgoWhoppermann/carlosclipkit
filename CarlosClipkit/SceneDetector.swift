@@ -270,6 +270,21 @@ class SceneDetector {
         return timestamps.sorted()
     }
 
+    /// Place exactly `countPerScene` stills in every scene — never skip any scene
+    func selectTimestampsPerScene(
+        sceneRanges: [(start: Double, end: Double)],
+        countPerScene: Int
+    ) -> [Double] {
+        guard !sceneRanges.isEmpty, countPerScene > 0 else { return [] }
+
+        var timestamps: [Double] = []
+        for scene in sceneRanges {
+            let sceneTimestamps = selectMultipleTimestampsInRange(scene, count: countPerScene)
+            timestamps.append(contentsOf: sceneTimestamps)
+        }
+        return timestamps.sorted()
+    }
+
     /// Select up to 3 start times per scene for clips/GIFs
     /// Adapts clip duration to fit shorter scenes rather than skipping them entirely
     /// - Parameters:
