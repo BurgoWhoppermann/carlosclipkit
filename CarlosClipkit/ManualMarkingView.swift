@@ -3,7 +3,6 @@ import AVFoundation
 
 struct ManualMarkingView: View {
     let videoURL: URL
-    @Binding var extractionMode: ExtractionMode
 
     @EnvironmentObject var appState: AppState
     @StateObject private var playerController: LoopingPlayerController
@@ -15,44 +14,29 @@ struct ManualMarkingView: View {
     @State private var errorMessage = ""
     @State private var isDetectingScenes = false
     @State private var showExportSheet = false
+    @State private var showAnalysisDialog = false
     @State private var lastPressedKey: String? = nil
     @State private var videoPlayerHeight: CGFloat = 300
     @State private var videoDragStartHeight: CGFloat? = nil
     @State private var showVolumeSlider = false
+    @State private var showCutDetectionPopover = false
     @State private var selectedStillId: UUID? = nil
 
     private let sceneDetector = SceneDetector()
+    private let videoProcessor = VideoProcessor()
 
-    init(videoURL: URL, extractionMode: Binding<ExtractionMode>) {
+    init(videoURL: URL) {
         self.videoURL = videoURL
-        self._extractionMode = extractionMode
         _playerController = StateObject(wrappedValue: LoopingPlayerController(url: videoURL))
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Top: Scene detection controls (above player)
-            manualSceneDetectionControls
-                .padding(.horizontal)
-                .padding(.bottom, 8)
+            // Marker hint bar
+            markerHintBar
 
             // Video Player
             videoPlayerSection
-
-            // Detection progress bar
-            if isDetectingScenes || appState.isDetectingScenes {
-                VStack(spacing: 4) {
-                    ProgressView(value: appState.detectionProgress)
-                        .tint(.clipkitBlue)
-                    Text(appState.detectionStatusMessage.isEmpty
-                         ? "Detecting cuts… \(Int(appState.detectionProgress * 100))%"
-                         : appState.detectionStatusMessage)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal)
-                .padding(.vertical, 4)
-            }
 
             // Controls bar
             controlsBar
@@ -96,9 +80,6 @@ struct ManualMarkingView: View {
                 detectScenes()
             }
 
-            // Transfer auto mode positions into editable manual marks
-            transferAutoMarksIfNeeded()
-
             // Don't autoplay — user can press Space or click to start
             appState.videoSize = playerController.videoSize
         }
@@ -125,7 +106,6 @@ struct ManualMarkingView: View {
         }
         .sheet(isPresented: $showExportSheet) {
             ExportSettingsView(
-                mode: .manual,
                 videoURL: videoURL,
                 stillCount: markingState.markedStills.count,
                 clipCount: markingState.markedClips.count,
@@ -139,6 +119,38 @@ struct ManualMarkingView: View {
             )
             .environmentObject(appState)
         }
+        .sheet(isPresented: $showAnalysisDialog) {
+            AnalysisSettingsView(onGenerate: {
+                generateMarkersFromSettings()
+            })
+            .environmentObject(appState)
+        }
+    }
+
+    // MARK: - Marker Hint Bar
+
+    private var markerHintBar: some View {
+        HStack(spacing: 6) {
+            Text("Place markers with")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            keyCap("S", glowColor: .orange)
+            keyCap("I", glowColor: .green)
+            keyCap("O", glowColor: .green)
+            Text("on your keyboard or")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            Button(action: { showAnalysisDialog = true }) {
+                Label("Auto-Generate", systemImage: "sparkles")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.clipkitBlue)
+            .controlSize(.small)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(Color.clipkitLightBlue)
     }
 
     // MARK: - Video Player Section
@@ -156,10 +168,35 @@ struct ManualMarkingView: View {
                 .background(Color.black)
                 .clipped()
 
-                // Overlay: filename top-right, playback controls bottom
+                // Overlay: cut detection top-left, filename top-right, playback controls bottom
                 VStack {
-                    HStack {
+                    HStack(alignment: .top) {
+                        // Cut detection popover button
+                        Button(action: { showCutDetectionPopover.toggle() }) {
+                            HStack(spacing: 5) {
+                                Image(systemName: cutDetectionIconName)
+                                    .font(.system(size: 12, weight: .medium))
+                                if !appState.scenesDetected && !isDetectingScenes {
+                                    Text("Detect Cuts")
+                                        .font(.caption2.weight(.medium))
+                                        .lineLimit(1)
+                                }
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(cutDetectionButtonBackground)
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Cut detection & snapping settings")
+                        .popover(isPresented: $showCutDetectionPopover, arrowEdge: .bottom) {
+                            cutDetectionPopoverContent
+                        }
+                        .padding(6)
+
                         Spacer()
+
                         HStack(spacing: 6) {
                             Text(videoURL.lastPathComponent)
                                 .font(.caption2)
@@ -377,16 +414,6 @@ struct ManualMarkingView: View {
                 }
                 Spacer()
 
-                // Snap to cuts toggle
-                if !markingState.detectedCuts.isEmpty {
-                    Toggle(isOn: $appState.snapToSceneCuts) {
-                        Label("Snap to cuts", systemImage: "magnet")
-                            .font(.caption2)
-                    }
-                    .toggleStyle(.checkbox)
-                    .controlSize(.small)
-                }
-
                 // Undo button
                 if markingState.canUndo {
                     Button(action: { markingState.undo() }) {
@@ -570,65 +597,39 @@ struct ManualMarkingView: View {
         }
     }
 
-    // MARK: - Scene Detection Controls (above player)
-    private var manualSceneDetectionControls: some View {
-        VStack(spacing: 8) {
-            // Cut sensitivity slider
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Cut Sensitivity")
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(.clipkitBlue)
+    // MARK: - Cut Detection Popover
 
-                HStack(spacing: 4) {
-                    Text("More")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .frame(width: 32, alignment: .trailing)
-                    Slider(value: $appState.detectionThreshold, in: 0.10...0.70, step: 0.05)
-                        .tint(.clipkitBlue)
-                    Text("Fewer")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .frame(width: 36, alignment: .leading)
-                }
-            }
-
-            HStack(spacing: 12) {
-                Button(action: { detectScenes() }) {
-                    Label(
-                        appState.scenesDetected ? "Re-detect Cuts" : "Detect Cuts",
-                        systemImage: "wand.and.stars"
-                    )
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.clipkitBlue)
-                .controlSize(.regular)
-                .disabled(isDetectingScenes)
-
-                Button(action: {
-                    markingState.clearAll()
-                    appState.resetAll()
-                }) {
-                    Label("Reset All", systemImage: "arrow.counterclockwise")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
-            }
+    private var cutDetectionIconName: String {
+        if isDetectingScenes || appState.isDetectingScenes {
+            return "circle.dotted"
+        } else if appState.scenesDetected {
+            return "scissors"
+        } else {
+            return "wand.and.stars"
         }
     }
 
-    // MARK: - Bottom Actions (legacy, no longer used from body)
+    private var cutDetectionButtonBackground: some ShapeStyle {
+        if isDetectingScenes || appState.isDetectingScenes {
+            return AnyShapeStyle(Color.clipkitBlue.opacity(0.7))
+        } else if appState.scenesDetected {
+            return AnyShapeStyle(Color.black.opacity(0.6))
+        } else {
+            return AnyShapeStyle(Color.clipkitBlue.opacity(0.55))
+        }
+    }
 
-    private var bottomActions: some View {
-        VStack(spacing: 12) {
-            // Cut sensitivity slider
+    private var cutDetectionPopoverContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Cut Detection")
+                .font(.headline)
+                .foregroundColor(.clipkitBlue)
+
+            // Sensitivity slider
             VStack(alignment: .leading, spacing: 4) {
-                Text("Cut Sensitivity")
+                Text("Sensitivity")
                     .font(.caption.weight(.semibold))
-                    .foregroundColor(.clipkitBlue)
-
+                    .foregroundColor(.secondary)
                 HStack(spacing: 4) {
                     Text("More")
                         .font(.caption2)
@@ -643,42 +644,56 @@ struct ManualMarkingView: View {
                 }
             }
 
-            // Detect / Reset row (matches auto mode)
-            HStack(spacing: 12) {
-                Button(action: { detectScenes() }) {
-                    Label(
-                        appState.scenesDetected ? "Re-detect Cuts" : "Detect Cuts",
-                        systemImage: "wand.and.stars"
-                    )
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.clipkitBlue)
-                .controlSize(.large)
-                .disabled(isDetectingScenes)
-
-                Button(action: {
-                    markingState.clearAll()
-                    appState.resetAll()
-                }) {
-                    Label("Reset All", systemImage: "arrow.counterclockwise")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-            }
-
-            // Export button
-            Button("Export Settings...") {
-                showExportSheet = true
+            // Detect button
+            Button(action: { detectScenes() }) {
+                Label(
+                    appState.scenesDetected ? "Re-detect Cuts" : "Detect Cuts",
+                    systemImage: "wand.and.stars"
+                )
+                .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .tint(.clipkitBlue)
-            .controlSize(.large)
-            .frame(maxWidth: .infinity)
-            .disabled(!markingState.hasMarkedItems)
+            .controlSize(.regular)
+            .disabled(isDetectingScenes)
+
+            // Inline progress
+            if isDetectingScenes || appState.isDetectingScenes {
+                VStack(spacing: 4) {
+                    ProgressView(value: appState.detectionProgress)
+                        .tint(.clipkitBlue)
+                    Text(appState.detectionStatusMessage.isEmpty
+                         ? "Detecting cuts… \(Int(appState.detectionProgress * 100))%"
+                         : appState.detectionStatusMessage)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            // Snap toggle (after cuts detected)
+            if !markingState.detectedCuts.isEmpty {
+                Divider()
+                Toggle(isOn: $appState.snapToSceneCuts) {
+                    Label("Snap to cuts", systemImage: "magnet")
+                        .font(.caption)
+                }
+                .toggleStyle(.checkbox)
+                .controlSize(.small)
+            }
+
+            // Cut count summary
+            if markingState.detectedCutsCount > 0 {
+                HStack(spacing: 4) {
+                    Image(systemName: "scissors")
+                        .font(.caption)
+                    Text("\(markingState.detectedCutsCount) cuts detected")
+                        .font(.caption)
+                }
+                .foregroundColor(.secondary)
+            }
         }
-        .padding()
+        .padding(16)
+        .frame(width: 280)
     }
 
     // MARK: - Actions
@@ -723,19 +738,58 @@ struct ManualMarkingView: View {
         }
     }
 
-    private func transferAutoMarksIfNeeded() {
-        // Always sync auto-generated positions into manual editing mode
-        if !appState.stillPositions.isEmpty {
-            markingState.markedStills = appState.stillPositions.map { MarkedStill(timestamp: $0) }
+    private func generateMarkersFromSettings() {
+        guard appState.scenesDetected else { return }
+
+        // Clear existing marks
+        markingState.clearAll()
+
+        // Generate stills
+        if appState.exportStillsEnabled {
+            appState.initializeStillPositions(from: appState.detectedScenes, count: appState.stillCount)
+
+            // Apply face refinement if selected
+            if appState.stillPlacement == .preferFaces {
+                Task {
+                    let refined = await videoProcessor.refineTimestamps(
+                        from: videoURL,
+                        timestamps: appState.stillPositions,
+                        videoDuration: appState.videoDuration,
+                        progress: { _, _ in }
+                    )
+                    await MainActor.run {
+                        appState.stillPositions = refined.timestamps
+                        for timestamp in appState.stillPositions {
+                            markingState.addStill(at: timestamp)
+                        }
+                        markingState.undoStack.removeAll()
+                    }
+                }
+            } else {
+                for timestamp in appState.stillPositions {
+                    markingState.addStill(at: timestamp)
+                }
+            }
         }
 
-        if let ranges = appState.clipRangeOverrides, !ranges.isEmpty {
-            markingState.markedClips = ranges.map {
-                MarkedClip(inPoint: $0.start, outPoint: $0.start + $0.duration)
-            }.sorted { $0.inPoint < $1.inPoint }
+        // Generate clips
+        if appState.exportMovingClipsEnabled {
+            let clipSpecs = sceneDetector.selectRandomClips(
+                videoDuration: appState.videoDuration,
+                clipDuration: appState.clipDuration,
+                count: appState.clipCount,
+                avoidCrossingScenes: appState.avoidCrossingScenes,
+                allowOverlapping: appState.allowOverlapping,
+                sceneRanges: appState.detectedScenes
+            )
+            for spec in clipSpecs {
+                let clip = MarkedClip(inPoint: spec.start, outPoint: spec.start + spec.duration)
+                markingState.markedClips.append(clip)
+            }
+            markingState.markedClips.sort { $0.inPoint < $1.inPoint }
         }
 
-        // Clear undo stack — synced marks shouldn't be undoable
+        // Clear undo stack — generated marks shouldn't be undoable
         markingState.undoStack.removeAll()
     }
 

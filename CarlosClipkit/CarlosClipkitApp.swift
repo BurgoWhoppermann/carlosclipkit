@@ -219,9 +219,6 @@ class AppState: ObservableObject {
     // Snap clip in/out points to nearest scene cut
     @Published var snapToSceneCuts: Bool = false
 
-    // Manual->Auto sync: overrides auto-computed clip ranges with manual edits
-    @Published var clipRangeOverrides: [(start: Double, duration: Double)]? = nil
-
     init() {
         // Throttle forwarding to max 10Hz — prevents 20Hz time observer from causing
         // full app re-renders on every tick
@@ -256,25 +253,12 @@ class AppState: ObservableObject {
         return count
     }
 
-    /// Copy manual mode marks into auto mode state so they survive a mode switch
-    func syncManualToAutoPositions() {
-        if !markingState.markedStills.isEmpty {
-            stillPositions = markingState.markedStills.map { $0.timestamp }.sorted()
-        }
-        if !markingState.markedClips.isEmpty {
-            clipRangeOverrides = markingState.markedClips.map {
-                (start: $0.inPoint, duration: $0.outPoint - $0.inPoint)
-            }.sorted { $0.start < $1.start }
-        }
-    }
-
     func clearSceneCache() {
         cancelSceneDetection()
         detectedScenes = []
         scenesDetected = false
         needsReanalysis = false
         resetStillPositions()
-        clipRangeOverrides = nil
         markingState.detectedCuts = []
     }
 

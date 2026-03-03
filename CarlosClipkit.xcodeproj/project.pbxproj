@@ -20,6 +20,7 @@
 		A1SPLASH02 /* BetaSplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1SPLASH01 /* BetaSplashView.swift */; };
 		A1000037 /* ExportSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000038 /* ExportSettingsView.swift */; };
 		A1000050 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A1000051 /* PrivacyInfo.xcprivacy */; };
+		A1ANALYZE02 /* AnalysisSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1ANALYZE01 /* AnalysisSettingsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,6 +39,7 @@
 		A1SPLASH01 /* BetaSplashView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetaSplashView.swift; sourceTree = "<group>"; };
 		A1000038 /* ExportSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportSettingsView.swift; sourceTree = "<group>"; };
 		A1000051 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A1ANALYZE01 /* AnalysisSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalysisSettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -67,6 +69,7 @@
 				A1000036 /* ManualMarkingView.swift */,
 				A1SPLASH01 /* BetaSplashView.swift */,
 				A1000038 /* ExportSettingsView.swift */,
+				A1ANALYZE01 /* AnalysisSettingsView.swift */,
 				A1000032 /* MarkingState.swift */,
 				A1000034 /* VideoPlayerRepresentable.swift */,
 				A1000006 /* VideoProcessor.swift */,
@@ -188,6 +191,7 @@
 				A1000025 /* VideoSnippetProcessor.swift in Sources */,
 				A1000029 /* SceneDetector.swift in Sources */,
 				A1000037 /* ExportSettingsView.swift in Sources */,
+				A1ANALYZE02 /* AnalysisSettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

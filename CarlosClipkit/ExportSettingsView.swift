@@ -4,7 +4,6 @@ import AVFoundation
 struct ExportSettingsView: View {
     private static let appIcon = NSApplication.shared.applicationIconImage.copy() as! NSImage
 
-    let mode: ExtractionMode
     let videoURL: URL
     let stillCount: Int
     let clipCount: Int
@@ -286,11 +285,7 @@ struct ExportSettingsView: View {
 
         Task {
             do {
-                if mode == .manual {
-                    try await exportManual(to: outputDir)
-                } else {
-                    try await exportAuto(to: outputDir)
-                }
+                try await exportManual(to: outputDir)
 
                 await MainActor.run {
                     isExporting = false
@@ -362,103 +357,4 @@ struct ExportSettingsView: View {
         }
     }
 
-    // MARK: - Auto Export
-
-    private func exportAuto(to outputDir: URL) async throws {
-        let scenes = appState.detectedScenes
-
-        var currentStep = 0
-        let totalSteps = appState.selectedExportCount
-
-        // Extract stills — timestamps are already quality-filtered from analysis
-        if appState.exportStills {
-            currentStep += 1
-            await MainActor.run {
-                exportStatusMessage = "Extracting Stills (\(currentStep)/\(totalSteps))..."
-            }
-
-            let stillTimestamps = appState.stillPositions.isEmpty ? nil : appState.stillPositions
-
-            try await videoProcessor.extractStills(
-                from: videoURL,
-                count: appState.stillCount,
-                to: outputDir,
-                sceneRanges: scenes,
-                specificTimestamps: stillTimestamps,
-                scale: appState.stillSize.scale,
-                format: appState.stillFormat
-            ) { currentProgress, message in
-                Task { @MainActor in
-                    let stepProgress = Double(currentStep - 1) / Double(totalSteps)
-                    let stepContribution = currentProgress / Double(totalSteps)
-                    exportProgress = stepProgress + stepContribution
-                    exportStatusMessage = "Stills (\(currentStep)/\(totalSteps)): \(message)"
-                }
-            }
-        }
-
-        // Use cached clip positions (WYSIWYG — same as shown on timeline)
-        let clipSpecs: [(start: Double, duration: Double)]
-        if let cached = appState.clipRangeOverrides {
-            clipSpecs = cached
-        } else {
-            let sceneDetector = SceneDetector()
-            clipSpecs = sceneDetector.selectRandomClips(
-                videoDuration: appState.videoDuration,
-                clipDuration: appState.clipDuration,
-                count: appState.clipCount,
-                avoidCrossingScenes: appState.avoidCrossingScenes,
-                allowOverlapping: appState.allowOverlapping,
-                sceneRanges: scenes
-            )
-        }
-
-        // Create GIFs
-        if appState.exportGIFs {
-            currentStep += 1
-            await MainActor.run {
-                exportStatusMessage = "Creating GIFs (\(currentStep)/\(totalSteps))..."
-            }
-
-            try await gifProcessor.extractGIFs(
-                from: videoURL,
-                clipSpecs: clipSpecs,
-                frameRate: appState.gifFrameRate,
-                resolution: appState.gifResolution,
-                to: outputDir
-            ) { currentProgress, message in
-                Task { @MainActor in
-                    let stepProgress = Double(currentStep - 1) / Double(totalSteps)
-                    let stepContribution = currentProgress / Double(totalSteps)
-                    exportProgress = stepProgress + stepContribution
-                    exportStatusMessage = "GIFs (\(currentStep)/\(totalSteps)): \(message)"
-                }
-            }
-        }
-
-        // Extract clips
-        if appState.exportClips {
-            currentStep += 1
-            await MainActor.run {
-                exportStatusMessage = "Extracting Clips (\(currentStep)/\(totalSteps))..."
-            }
-
-            try await snippetProcessor.extractClips(
-                from: videoURL,
-                clipSpecs: clipSpecs,
-                format: appState.clipFormat,
-                to: outputDir,
-                export4x5: appState.export4x5,
-                export9x16: appState.export9x16,
-                presetName: appState.clipQuality.exportPreset
-            ) { currentProgress, message in
-                Task { @MainActor in
-                    let stepProgress = Double(currentStep - 1) / Double(totalSteps)
-                    let stepContribution = currentProgress / Double(totalSteps)
-                    exportProgress = stepProgress + stepContribution
-                    exportStatusMessage = "Clips (\(currentStep)/\(totalSteps)): \(message)"
-                }
-            }
-        }
-    }
 }
