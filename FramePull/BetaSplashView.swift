@@ -98,6 +98,11 @@ struct BetaSplashView: View {
                         .font(.caption2).foregroundColor(.secondary)
                 }
                 HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "cube").font(.caption2).foregroundColor(.secondary).frame(width: 14)
+                    Text("Added LUT Support")
+                        .font(.caption2).foregroundColor(.secondary)
+                }
+                HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "square.3.layers.3d").font(.caption2).foregroundColor(.secondary).frame(width: 14)
                     Text("Multi-lane timeline for overlapping clips, loop buttons on clip bars")
                         .font(.caption2).foregroundColor(.secondary)
