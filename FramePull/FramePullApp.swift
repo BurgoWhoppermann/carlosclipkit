@@ -302,6 +302,82 @@ class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Unified Undo Stack
+
+    /// All undoable actions across the app (markers, LUT, settings regeneration)
+    enum AppUndoAction {
+        /// Marker change (wraps existing MarkingState undo action)
+        case marking(MarkingState.UndoAction)
+        /// LUT change — stores previous LUT state for restoration
+        case lutChange(oldName: String?, oldDimension: Int, oldCubeData: Data?)
+        /// Settings change that triggered marker regeneration — stores previous marker state
+        case settingsRegeneration(previousStills: [MarkedStill], previousClips: [MarkedClip], description: String)
+    }
+
+    @Published var appUndoStack: [AppUndoAction] = [] {
+        didSet {
+            if appUndoStack.count > 50 {
+                appUndoStack.removeFirst(appUndoStack.count - 50)
+            }
+        }
+    }
+    var canAppUndo: Bool { !appUndoStack.isEmpty }
+
+    /// Pop the last unified undo action and apply its inverse
+    func appUndo() {
+        guard let action = appUndoStack.popLast() else { return }
+
+        switch action {
+        case .marking(let markingAction):
+            applyMarkingUndoAction(markingAction)
+
+        case .lutChange(let oldName, let oldDim, let oldData):
+            if let data = oldData, let name = oldName {
+                lutCubeDimension = oldDim
+                lutCubeData = data
+                selectedLUTName = name
+            } else {
+                clearLUT()
+            }
+
+        case .settingsRegeneration(let previousStills, let previousClips, _):
+            markingState.markedStills = previousStills
+            markingState.markedClips = previousClips
+        }
+    }
+
+    /// Apply the inverse of a MarkingState.UndoAction directly (mirrors MarkingState.undo())
+    private func applyMarkingUndoAction(_ action: MarkingState.UndoAction) {
+        switch action {
+        case .addedStill(let still):
+            markingState.markedStills.removeAll { $0.id == still.id }
+        case .removedStill(let still):
+            markingState.markedStills.append(still)
+            markingState.markedStills.sort { $0.timestamp < $1.timestamp }
+        case .movedStill(let id, let from, _, let wasManual):
+            if let index = markingState.markedStills.firstIndex(where: { $0.id == id }) {
+                markingState.markedStills[index].timestamp = from
+                markingState.markedStills[index].isManual = wasManual
+                markingState.markedStills.sort { $0.timestamp < $1.timestamp }
+            }
+        case .addedClip(let clip):
+            markingState.markedClips.removeAll { $0.id == clip.id }
+        case .removedClip(let clip):
+            markingState.markedClips.append(clip)
+            markingState.markedClips.sort { $0.inPoint < $1.inPoint }
+        case .modifiedClipRange(let id, let oldIn, let oldOut, let wasManual):
+            if let index = markingState.markedClips.firstIndex(where: { $0.id == id }) {
+                markingState.markedClips[index].inPoint = oldIn
+                markingState.markedClips[index].outPoint = oldOut
+                markingState.markedClips[index].isManual = wasManual
+                markingState.markedClips.sort { $0.inPoint < $1.inPoint }
+            }
+        case .clearedAll(let stills, let clips):
+            markingState.markedStills = stills
+            markingState.markedClips = clips
+        }
+    }
+
     init() {
         // Throttle forwarding to max 10Hz — prevents 20Hz time observer from causing
         // full app re-renders on every tick
@@ -310,6 +386,12 @@ class AppState: ObservableObject {
             .sink { [weak self] _ in
                 self?.objectWillChange.send()
             }
+
+        // Bridge marking undo actions to the unified app undo stack
+        markingState.onUndoActionRecorded = { [weak self] action in
+            self?.appUndoStack.append(.marking(action))
+        }
+
         restoreLUTSettings()
     }
 

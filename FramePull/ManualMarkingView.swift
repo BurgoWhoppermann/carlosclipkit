@@ -181,19 +181,19 @@ struct ManualMarkingView: View {
                 guard let chars = event.charactersIgnoringModifiers?.lowercased() else { return event }
                 switch chars {
                 case "s":
-                    ms.addStill(at: pc.currentTime)
+                    ms.addStill(at: pc.currentTime, isManual: true)
                     return nil
                 case "i":
                     ms.setInPoint(at: pc.currentTime, snapEnabled: app.snapToSceneCuts)
                     return nil
                 case "o":
-                    ms.setOutPoint(at: pc.currentTime, snapEnabled: app.snapToSceneCuts)
+                    ms.setOutPoint(at: pc.currentTime, snapEnabled: app.snapToSceneCuts, isManual: true)
                     return nil
                 case " ":
                     pc.togglePlayPause()
                     return nil
                 case "z" where event.modifierFlags.contains(.command):
-                    ms.undo()
+                    app.appUndo()
                     return nil
                 default:
                     if event.keyCode == 53 { // Escape
@@ -273,6 +273,10 @@ struct ManualMarkingView: View {
             // Don't regenerate — just toggle visibility (markers persist)
         }
         .onChange(of: appState.allowOverlapping) { _ in liveUpdateClips() }
+        // Sync player LUT composition when LUT changes (e.g. via undo)
+        .onChange(of: appState.selectedLUTName) { _ in
+            updatePlayerLUT()
+        }
         .onDisappear {
             playerController.pause()
             if let monitor = keyMonitor {
@@ -605,8 +609,14 @@ struct ManualMarkingView: View {
         Menu {
             // "None" option
             Button(action: {
+                let oldName = appState.selectedLUTName
+                let oldDim = appState.lutCubeDimension
+                let oldData = appState.lutCubeData
                 appState.clearLUT()
                 playerController.clearVideoComposition()
+                if oldData != nil {
+                    appState.appUndoStack.append(.lutChange(oldName: oldName, oldDimension: oldDim, oldCubeData: oldData))
+                }
             }) {
                 if appState.selectedLUTName == nil {
                     Label("None", systemImage: "checkmark")
@@ -624,8 +634,12 @@ struct ManualMarkingView: View {
                 Section("Built-in") {
                     ForEach(builtIn, id: \.name) { lut in
                         Button(action: {
+                            let oldName = appState.selectedLUTName
+                            let oldDim = appState.lutCubeDimension
+                            let oldData = appState.lutCubeData
                             appState.loadLUT(name: lut.name, url: lut.url)
                             updatePlayerLUT()
+                            appState.appUndoStack.append(.lutChange(oldName: oldName, oldDimension: oldDim, oldCubeData: oldData))
                         }) {
                             if appState.selectedLUTName == lut.name {
                                 Label(lut.name, systemImage: "checkmark")
@@ -642,8 +656,12 @@ struct ManualMarkingView: View {
                 Section("User") {
                     ForEach(userLUTs, id: \.name) { lut in
                         Button(action: {
+                            let oldName = appState.selectedLUTName
+                            let oldDim = appState.lutCubeDimension
+                            let oldData = appState.lutCubeData
                             appState.loadLUT(name: lut.name, url: lut.url)
                             updatePlayerLUT()
+                            appState.appUndoStack.append(.lutChange(oldName: oldName, oldDimension: oldDim, oldCubeData: oldData))
                         }) {
                             if appState.selectedLUTName == lut.name {
                                 Label(lut.name, systemImage: "checkmark")
@@ -667,8 +685,14 @@ struct ManualMarkingView: View {
                     // If the active LUT was from the user folder, clear it
                     if let name = appState.selectedLUTName,
                        !appState.availableLUTs.contains(where: { $0.name == name }) {
+                        let oldName = appState.selectedLUTName
+                        let oldDim = appState.lutCubeDimension
+                        let oldData = appState.lutCubeData
                         appState.clearLUT()
                         playerController.clearVideoComposition()
+                        if oldData != nil {
+                            appState.appUndoStack.append(.lutChange(oldName: oldName, oldDimension: oldDim, oldCubeData: oldData))
+                        }
                     }
                 }) {
                     Label("Clear User Folder", systemImage: "folder.badge.minus")
@@ -729,16 +753,26 @@ struct ManualMarkingView: View {
                     }
                 }
 
-                // Color legend (inline)
+                // Color legend (inline) — shows auto vs manual marker types
                 HStack(spacing: 8) {
                     if !markingState.detectedCuts.isEmpty {
                         legendItem(color: .secondary.opacity(0.5), label: "Cuts")
                     }
-                    if !markingState.markedStills.isEmpty {
-                        legendItem(color: .orange, label: "Stills")
+                    let hasAutoStills = markingState.markedStills.contains { !$0.isManual }
+                    let hasManualStills = markingState.markedStills.contains { $0.isManual }
+                    if hasAutoStills {
+                        legendItem(color: .orange, label: "Auto")
                     }
-                    if !markingState.markedClips.isEmpty || markingState.pendingInPoint != nil {
+                    if hasManualStills {
+                        legendItem(color: .framePullBlue, label: "Manual")
+                    }
+                    let hasAutoClips = markingState.markedClips.contains { !$0.isManual }
+                    let hasManualClips = markingState.markedClips.contains { $0.isManual }
+                    if hasAutoClips || (markingState.pendingInPoint != nil && !hasManualClips) {
                         legendItem(color: .green, label: "Clips")
+                    }
+                    if hasManualClips || (markingState.pendingInPoint != nil && hasManualClips) {
+                        legendItem(color: .framePullBlue, label: "M.Clips")
                     }
                 }
                 .font(.caption2)
@@ -781,9 +815,9 @@ struct ManualMarkingView: View {
                         .foregroundColor(.secondary)
                 }
 
-                // Undo button
-                if markingState.canUndo {
-                    Button(action: { markingState.undo() }) {
+                // Undo button — uses unified app undo stack
+                if appState.canAppUndo {
+                    Button(action: { appState.appUndo() }) {
                         Image(systemName: "arrow.uturn.backward")
                             .foregroundColor(.secondary)
                     }
@@ -1084,6 +1118,9 @@ struct ManualMarkingView: View {
             } else {
                 ForEach(markingState.markedStills) { still in
                     HStack {
+                        Circle()
+                            .fill(still.isManual ? Color.framePullBlue : Color.orange)
+                            .frame(width: 8, height: 8)
                         Text(still.formattedTime)
                             .font(.system(.body, design: .monospaced))
 
@@ -1144,6 +1181,9 @@ struct ManualMarkingView: View {
             } else {
                 ForEach(markingState.markedClips) { clip in
                     HStack {
+                        Circle()
+                            .fill(clip.isManual ? Color.framePullBlue : Color.green)
+                            .frame(width: 8, height: 8)
                         Text("\(clip.formattedInPoint) - \(clip.formattedOutPoint)")
                             .font(.system(.body, design: .monospaced))
 
@@ -1329,35 +1369,46 @@ struct ManualMarkingView: View {
             return
         }
 
-        // Incremental: sync current marker positions into appState, then adjust
-        let currentPositions = markingState.markedStills.map { $0.timestamp }.sorted()
+        // Only count/adjust auto-generated stills — manual ones are untouched
+        let autoStills = markingState.markedStills.filter { !$0.isManual }
+        let manualStills = markingState.markedStills.filter { $0.isManual }
+        let currentPositions = autoStills.map { $0.timestamp }.sorted()
         appState.stillPositions = currentPositions
 
-        let newCount = appState.stillCount
-
+        let newCount: Int
         if appState.stillPlacement == .perScene {
-            // Per-scene: target is stillCount * sceneCount
-            let targetCount = newCount * max(1, effectiveScenes.count)
-            appState.adjustStillPositions(to: targetCount, scenes: effectiveScenes)
+            let targetCount = appState.stillCount * max(1, effectiveScenes.count)
+            newCount = max(0, targetCount - manualStills.count)
         } else {
-            appState.adjustStillPositions(to: newCount, scenes: effectiveScenes)
+            newCount = max(0, appState.stillCount - manualStills.count)
         }
+
+        appState.adjustStillPositions(to: newCount, scenes: effectiveScenes)
 
         let newPositions = Set(appState.stillPositions)
         let oldPositionSet = Set(currentPositions)
+        let manualTimestamps = manualStills.map { $0.timestamp }
 
-        // Add new stills (positions that didn't exist before)
+        // Suppress per-item undo callbacks during bulk update
+        markingState.suppressUndoCallback = true
+
+        // Add new auto stills (skip if too close to a manual marker)
         for pos in appState.stillPositions where !oldPositionSet.contains(pos) {
-            markingState.addStill(at: pos)
+            let tooClose = manualTimestamps.contains { abs($0 - pos) < 0.5 }
+            if !tooClose {
+                markingState.addStill(at: pos, isManual: false)
+            }
         }
 
-        // Remove excess stills (positions that are no longer needed)
+        // Remove excess auto stills only (never remove manual)
         let positionsToRemove = oldPositionSet.subtracting(newPositions)
         for pos in positionsToRemove {
-            if let still = markingState.markedStills.first(where: { abs($0.timestamp - pos) < 0.001 }) {
+            if let still = markingState.markedStills.first(where: { abs($0.timestamp - pos) < 0.001 && !$0.isManual }) {
                 markingState.removeStill(id: still.id)
             }
         }
+
+        markingState.suppressUndoCallback = false
     }
 
     private func liveUpdateClips() {
@@ -1368,7 +1419,7 @@ struct ManualMarkingView: View {
     private func handleKeyPress(_ key: VideoPlayerRepresentable.KeyPress) {
         switch key {
         case .still:
-            markingState.addStill(at: playerController.currentTime)
+            markingState.addStill(at: playerController.currentTime, isManual: true)
             flashKey("S")
 
         case .inPoint:
@@ -1376,7 +1427,7 @@ struct ManualMarkingView: View {
             flashKey("I")
 
         case .outPoint:
-            markingState.setOutPoint(at: playerController.currentTime, snapEnabled: appState.snapToSceneCuts)
+            markingState.setOutPoint(at: playerController.currentTime, snapEnabled: appState.snapToSceneCuts, isManual: true)
             flashKey("O")
 
         case .playPause:
@@ -1386,7 +1437,7 @@ struct ManualMarkingView: View {
             markingState.cancelPendingInPoint()
 
         case .undo:
-            markingState.undo()
+            appState.appUndo()
 
         case .delete:
             switch activeMarker {
@@ -1436,24 +1487,31 @@ struct ManualMarkingView: View {
     }
 
     /// Regenerate only stills based on current settings (leaves clips untouched)
-    /// Used by the Generate button — saves old state for undo
+    /// Used by the Generate button — saves old state for undo, preserves manual markers
     private func regenerateStills() {
         // Cancel any in-progress face search
         faceRefinementTask?.cancel()
         faceRefinementTask = nil
         isSearchingFaces = false
 
-        // Save old stills so the full regeneration is undo-able
+        // Save full state for undo
         let previousStills = markingState.markedStills
         let previousClips = markingState.markedClips
 
-        // Clear existing stills only
-        markingState.clearStills()
+        // Clear only auto-generated stills — manual markers survive
+        markingState.clearAutoStills()
+        let manualStills = markingState.markedStills // Only manual stills remain
+        let manualTimestamps = manualStills.map { $0.timestamp }
+
+        // Suppress per-item undo callbacks during bulk regeneration
+        markingState.suppressUndoCallback = true
 
         guard appState.exportStillsEnabled else {
-            // Record undo if there were stills before
+            markingState.suppressUndoCallback = false
             if !previousStills.isEmpty {
-                markingState.undoStack.append(.clearedAll(stills: previousStills, clips: previousClips))
+                appState.appUndoStack.append(.settingsRegeneration(
+                    previousStills: previousStills, previousClips: previousClips,
+                    description: "Stills disabled"))
             }
             return
         }
@@ -1461,25 +1519,27 @@ struct ManualMarkingView: View {
         if appState.stillPlacement == .preferFaces {
             // Prefer Faces needs scene detection to work properly
             if appState.detectedScenes.isEmpty {
-                // Restore stills since we can't proceed
                 markingState.markedStills = previousStills
+                markingState.suppressUndoCallback = false
                 showFaceDetectionAlert = true
                 return
             }
 
-            // Use cached results if available (e.g. switching back from another mode)
+            // Use cached results if available
             if let cached = cachedFaceTimestamps {
                 appState.stillPositions = cached
-                markingState.clearStills()
                 for t in cached {
-                    markingState.addStill(at: t)
+                    let tooClose = manualTimestamps.contains { abs($0 - t) < 0.5 }
+                    if !tooClose {
+                        markingState.addStill(at: t, isManual: false)
+                    }
                 }
                 faceStillsCount = cached.count
-                // Replace auto-generated undo entries with a single undo-to-previous
+                markingState.suppressUndoCallback = false
                 markingState.undoStack.removeAll()
-                if !previousStills.isEmpty {
-                    markingState.undoStack.append(.clearedAll(stills: previousStills, clips: previousClips))
-                }
+                appState.appUndoStack.append(.settingsRegeneration(
+                    previousStills: previousStills, previousClips: previousClips,
+                    description: "Face still regeneration"))
                 return
             }
 
@@ -1505,15 +1565,19 @@ struct ManualMarkingView: View {
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     appState.stillPositions = timestamps
-                    markingState.clearStills()
+                    markingState.clearAutoStills()
+                    let manualTs = markingState.markedStills.map { $0.timestamp }
                     for t in timestamps {
-                        markingState.addStill(at: t)
+                        let tooClose = manualTs.contains { abs($0 - t) < 0.5 }
+                        if !tooClose {
+                            markingState.addStill(at: t, isManual: false)
+                        }
                     }
-                    // Replace auto-generated undo entries with a single undo-to-previous
+                    markingState.suppressUndoCallback = false
                     markingState.undoStack.removeAll()
-                    if !previousStills.isEmpty {
-                        markingState.undoStack.append(.clearedAll(stills: previousStills, clips: previousClips))
-                    }
+                    appState.appUndoStack.append(.settingsRegeneration(
+                        previousStills: previousStills, previousClips: previousClips,
+                        description: "Face still regeneration"))
                     faceStillsCount = timestamps.count
                     isSearchingFaces = false
                     cachedFaceTimestamps = timestamps
@@ -1523,28 +1587,40 @@ struct ManualMarkingView: View {
             // Synchronous: spread evenly or per scene
             appState.initializeStillPositions(from: effectiveScenes, count: appState.stillCount)
             for timestamp in appState.stillPositions {
-                markingState.addStill(at: timestamp)
+                let tooClose = manualTimestamps.contains { abs($0 - timestamp) < 0.5 }
+                if !tooClose {
+                    markingState.addStill(at: timestamp, isManual: false)
+                }
             }
         }
 
-        // Replace the auto-generated per-still undo entries with a single undo-to-previous
+        markingState.suppressUndoCallback = false
+        // Replace per-item undo entries with single settings regeneration undo
         markingState.undoStack.removeAll()
         if !previousStills.isEmpty {
-            markingState.undoStack.append(.clearedAll(stills: previousStills, clips: previousClips))
+            appState.appUndoStack.append(.settingsRegeneration(
+                previousStills: previousStills, previousClips: previousClips,
+                description: "Still regeneration"))
         }
     }
 
     /// Regenerate only clips based on current settings (leaves stills untouched)
-    /// Saves old state for undo
+    /// Preserves manual clips, saves old state for undo
     private func regenerateClips() {
         let previousStills = markingState.markedStills
         let previousClips = markingState.markedClips
 
-        markingState.clearClips()
+        // Clear only auto-generated clips — manual ones survive
+        markingState.clearAutoClips()
+
+        markingState.suppressUndoCallback = true
 
         guard appState.exportMovingClipsEnabled else {
+            markingState.suppressUndoCallback = false
             if !previousClips.isEmpty {
-                markingState.undoStack.append(.clearedAll(stills: previousStills, clips: previousClips))
+                appState.appUndoStack.append(.settingsRegeneration(
+                    previousStills: previousStills, previousClips: previousClips,
+                    description: "Clips disabled"))
             }
             return
         }
@@ -1557,14 +1633,17 @@ struct ManualMarkingView: View {
             sceneRanges: effectiveScenes
         )
         for spec in clipSpecs {
-            let clip = MarkedClip(inPoint: spec.start, outPoint: spec.start + spec.duration)
+            let clip = MarkedClip(inPoint: spec.start, outPoint: spec.start + spec.duration, isManual: false)
             markingState.markedClips.append(clip)
         }
         markingState.markedClips.sort { $0.inPoint < $1.inPoint }
 
+        markingState.suppressUndoCallback = false
         // Single undo action to restore previous state
         if !previousClips.isEmpty || !previousStills.isEmpty {
-            markingState.undoStack.append(.clearedAll(stills: previousStills, clips: previousClips))
+            appState.appUndoStack.append(.settingsRegeneration(
+                previousStills: previousStills, previousClips: previousClips,
+                description: "Clip regeneration"))
         }
     }
 
@@ -1671,12 +1750,23 @@ struct ManualTimelineView: View {
         case outPoint
     }
 
-    // Colors
-    private let stillColor = Color.orange
-    private let clipColor = Color.green
+    // Colors — manual markers are blue, auto-generated are orange/green
+    private let autoStillColor = Color.orange
+    private let manualMarkerColor = Color.framePullBlue
+    private let autoClipColor = Color.green
     private let cutColor = Color.secondary.opacity(0.5)
     private let playheadColor = Color.framePullBlue
     private let pendingColor = Color.orange
+
+    /// Color for a still marker based on its origin (manual vs auto)
+    private func stillColor(for still: MarkedStill) -> Color {
+        still.isManual ? manualMarkerColor : autoStillColor
+    }
+
+    /// Color for a clip marker based on its origin (manual vs auto)
+    private func clipColor(for clip: MarkedClip) -> Color {
+        clip.isManual ? manualMarkerColor : autoClipColor
+    }
 
     /// Greedy interval scheduling: assigns overlapping clips to separate lanes (max 3)
     /// so they stack vertically instead of overlapping on the timeline.
@@ -1733,13 +1823,14 @@ struct ManualTimelineView: View {
                         .position(x: x, y: timelineHeight / 2)
                 }
 
-                // Marked clips (green ranges with draggable edges)
+                // Marked clips (blue=manual, green=auto, ranges with draggable edges)
                 ForEach(markedClips) { clip in
                     let inX = xPosition(for: clip.inPoint, width: width)
                     let outX = xPosition(for: clip.outPoint, width: width)
                     let isDragging = draggingClipId == clip.id
                     let lane = clipLaneAssignments[clip.id] ?? 0
                     let clipY: CGFloat = 40 + CGFloat(lane) * 22
+                    let barColor = clipColor(for: clip)
 
                     // Compute display positions that follow the drag handle
                     let displayInX = isDragging && draggingClipEdge == .inPoint ? inX + clipDragOffset : inX
@@ -1751,7 +1842,7 @@ struct ManualTimelineView: View {
                     let isBarHovered = hoveredClipBarId == clip.id
                     ZStack {
                         RoundedRectangle(cornerRadius: 2)
-                            .fill(clipColor.opacity(isLooping ? 0.7 : (isDragging ? 0.6 : 0.4)))
+                            .fill(barColor.opacity(isLooping ? 0.7 : (isDragging ? 0.6 : 0.4)))
                         if clipWidth > 30 && (isBarHovered || isLooping) {
                             Button(action: { onLoopClip(clip.id) }) {
                                 Image(systemName: isLooping ? "stop.fill" : "play.fill")
@@ -1775,9 +1866,9 @@ struct ManualTimelineView: View {
                     let inHandleWidth: CGFloat = isInActive ? 10 : (isInHovered ? 8 : 6)
                     let inHandleHeight: CGFloat = isInActive ? 28 : (isInHovered ? 26 : 22)
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(isInActive ? Color.white : clipColor)
+                        .fill(isInActive ? Color.white : barColor)
                         .frame(width: inHandleWidth, height: inHandleHeight)
-                        .shadow(color: isInActive ? Color.white.opacity(0.6) : (isInHovered ? clipColor.opacity(0.6) : .clear), radius: isInActive ? 6 : 4)
+                        .shadow(color: isInActive ? Color.white.opacity(0.6) : (isInHovered ? barColor.opacity(0.6) : .clear), radius: isInActive ? 6 : 4)
                         .animation(.easeInOut(duration: 0.15), value: isInHovered)
                         .animation(.easeInOut(duration: 0.15), value: isInActive)
                         .frame(width: 20, height: 28)
@@ -1826,9 +1917,9 @@ struct ManualTimelineView: View {
                     let outHandleWidth: CGFloat = isOutActive ? 10 : (isOutHovered ? 8 : 6)
                     let outHandleHeight: CGFloat = isOutActive ? 28 : (isOutHovered ? 26 : 22)
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(isOutActive ? Color.white : clipColor)
+                        .fill(isOutActive ? Color.white : barColor)
                         .frame(width: outHandleWidth, height: outHandleHeight)
-                        .shadow(color: isOutActive ? Color.white.opacity(0.6) : (isOutHovered ? clipColor.opacity(0.6) : .clear), radius: isOutActive ? 6 : 4)
+                        .shadow(color: isOutActive ? Color.white.opacity(0.6) : (isOutHovered ? barColor.opacity(0.6) : .clear), radius: isOutActive ? 6 : 4)
                         .animation(.easeInOut(duration: 0.15), value: isOutHovered)
                         .animation(.easeInOut(duration: 0.15), value: isOutActive)
                         .frame(width: 20, height: 28)
@@ -1882,7 +1973,7 @@ struct ManualTimelineView: View {
                         .zIndex(15)
                 }
 
-                // Still markers (orange dots - draggable, selectable)
+                // Still markers (dots - blue=manual, orange=auto, draggable, selectable)
                 ForEach(markedStills) { still in
                     let baseX = xPosition(for: still.timestamp, width: width)
                     let isDragging = draggingStillId == still.id
@@ -1890,16 +1981,17 @@ struct ManualTimelineView: View {
                     let isSelected = selectedStillId == still.id
                     let currentX = isDragging ? baseX + stillDragOffset : baseX
                     let size: CGFloat = isDragging ? 14 : (isSelected ? 14 : (isHovered ? 12 : 10))
+                    let markerColor = stillColor(for: still)
 
                     Circle()
-                        .fill(stillColor)
+                        .fill(markerColor)
                         .frame(width: size, height: size)
                         .overlay(
                             Circle()
                                 .strokeBorder(Color.white, lineWidth: isSelected ? 2 : 0)
                                 .frame(width: size, height: size)
                         )
-                        .shadow(color: (isDragging || isHovered || isSelected) ? stillColor.opacity(0.8) : .clear, radius: isSelected ? 6 : 4)
+                        .shadow(color: (isDragging || isHovered || isSelected) ? markerColor.opacity(0.8) : .clear, radius: isSelected ? 6 : 4)
                         .animation(.easeInOut(duration: 0.15), value: isHovered)
                         .frame(width: 30, height: 28)
                         .contentShape(Rectangle())

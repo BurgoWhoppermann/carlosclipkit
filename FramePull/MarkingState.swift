@@ -5,10 +5,13 @@ import SwiftUI
 struct MarkedStill: Identifiable, Equatable {
     let id: UUID
     var timestamp: Double
+    /// Whether this marker was placed/edited manually by the user (vs auto-generated)
+    var isManual: Bool
 
-    init(timestamp: Double, id: UUID = UUID()) {
+    init(timestamp: Double, id: UUID = UUID(), isManual: Bool = false) {
         self.id = id
         self.timestamp = timestamp
+        self.isManual = isManual
     }
 
     var formattedTime: String {
@@ -21,11 +24,14 @@ struct MarkedClip: Identifiable, Equatable {
     let id: UUID
     var inPoint: Double
     var outPoint: Double
+    /// Whether this marker was placed/edited manually by the user (vs auto-generated)
+    var isManual: Bool
 
-    init(inPoint: Double, outPoint: Double, id: UUID = UUID()) {
+    init(inPoint: Double, outPoint: Double, id: UUID = UUID(), isManual: Bool = false) {
         self.id = id
         self.inPoint = inPoint
         self.outPoint = outPoint
+        self.isManual = isManual
     }
 
     var duration: Double {
@@ -111,11 +117,25 @@ class MarkingState: ObservableObject {
     enum UndoAction {
         case addedStill(MarkedStill)
         case removedStill(MarkedStill)
-        case movedStill(id: UUID, from: Double, to: Double)
+        case movedStill(id: UUID, from: Double, to: Double, wasManual: Bool)
         case addedClip(MarkedClip)
         case removedClip(MarkedClip)
-        case modifiedClipRange(id: UUID, oldIn: Double, oldOut: Double)
+        case modifiedClipRange(id: UUID, oldIn: Double, oldOut: Double, wasManual: Bool)
         case clearedAll(stills: [MarkedStill], clips: [MarkedClip])
+    }
+
+    /// Callback invoked when an undo action is recorded, so the parent (AppState) can mirror it
+    var onUndoActionRecorded: ((UndoAction) -> Void)?
+
+    /// When true, onUndoActionRecorded callback is suppressed (used during bulk regeneration)
+    var suppressUndoCallback: Bool = false
+
+    /// Record an undo action and notify the parent
+    private func recordUndo(_ action: UndoAction) {
+        undoStack.append(action)
+        if !suppressUndoCallback {
+            onUndoActionRecorded?(action)
+        }
     }
 
     @Published var undoStack: [UndoAction] = [] {
@@ -139,9 +159,10 @@ class MarkingState: ObservableObject {
             markedStills.append(still)
             markedStills.sort { $0.timestamp < $1.timestamp }
 
-        case .movedStill(let id, let from, _):
+        case .movedStill(let id, let from, _, let wasManual):
             if let index = markedStills.firstIndex(where: { $0.id == id }) {
                 markedStills[index].timestamp = from
+                markedStills[index].isManual = wasManual
                 markedStills.sort { $0.timestamp < $1.timestamp }
             }
 
@@ -152,10 +173,11 @@ class MarkingState: ObservableObject {
             markedClips.append(clip)
             markedClips.sort { $0.inPoint < $1.inPoint }
 
-        case .modifiedClipRange(let id, let oldIn, let oldOut):
+        case .modifiedClipRange(let id, let oldIn, let oldOut, let wasManual):
             if let index = markedClips.firstIndex(where: { $0.id == id }) {
                 markedClips[index].inPoint = oldIn
                 markedClips[index].outPoint = oldOut
+                markedClips[index].isManual = wasManual
                 markedClips.sort { $0.inPoint < $1.inPoint }
             }
 
@@ -168,18 +190,18 @@ class MarkingState: ObservableObject {
     // MARK: - Actions
 
     /// Add a still at the current time
-    func addStill(at timestamp: Double) {
+    func addStill(at timestamp: Double, isManual: Bool = false) {
         guard !markedStills.contains(where: { abs($0.timestamp - timestamp) < frameDuration }) else { return }
-        let still = MarkedStill(timestamp: timestamp)
+        let still = MarkedStill(timestamp: timestamp, isManual: isManual)
         markedStills.append(still)
         markedStills.sort { $0.timestamp < $1.timestamp }
-        undoStack.append(.addedStill(still))
+        recordUndo(.addedStill(still))
     }
 
     /// Remove a still by ID
     func removeStill(id: UUID) {
         if let still = markedStills.first(where: { $0.id == id }) {
-            undoStack.append(.removedStill(still))
+            recordUndo(.removedStill(still))
         }
         markedStills.removeAll { $0.id == id }
     }
@@ -199,17 +221,17 @@ class MarkingState: ObservableObject {
     }
 
     /// Set the OUT point and create a clip
-    func setOutPoint(at timestamp: Double, snapEnabled: Bool = false) {
+    func setOutPoint(at timestamp: Double, snapEnabled: Bool = false, isManual: Bool = false) {
         guard let inPoint = pendingInPoint else { return }
 
         let time = snapEnabled ? snapToNearestCut(timestamp) : timestamp
         guard time > inPoint else { return }
 
-        let clip = MarkedClip(inPoint: inPoint, outPoint: time)
+        let clip = MarkedClip(inPoint: inPoint, outPoint: time, isManual: isManual)
         markedClips.append(clip)
         markedClips.sort { $0.inPoint < $1.inPoint }
         pendingInPoint = nil
-        undoStack.append(.addedClip(clip))
+        recordUndo(.addedClip(clip))
     }
 
     /// Cancel the pending IN point
@@ -220,7 +242,7 @@ class MarkingState: ObservableObject {
     /// Remove a clip by ID
     func removeClip(id: UUID) {
         if let clip = markedClips.first(where: { $0.id == id }) {
-            undoStack.append(.removedClip(clip))
+            recordUndo(.removedClip(clip))
         }
         markedClips.removeAll { $0.id == id }
     }
@@ -228,7 +250,7 @@ class MarkingState: ObservableObject {
     /// Remove a clip's out-point, reverting the in-point to pendingInPoint
     func removeClipOutPoint(id: UUID) {
         guard let clip = markedClips.first(where: { $0.id == id }) else { return }
-        undoStack.append(.removedClip(clip))
+        recordUndo(.removedClip(clip))
         markedClips.removeAll { $0.id == id }
         pendingInPoint = clip.inPoint
     }
@@ -236,7 +258,7 @@ class MarkingState: ObservableObject {
     /// Clear all marks
     func clearAll() {
         if hasMarkedItems {
-            undoStack.append(.clearedAll(stills: markedStills, clips: markedClips))
+            recordUndo(.clearedAll(stills: markedStills, clips: markedClips))
         }
         markedStills.removeAll()
         markedClips.removeAll()
@@ -264,21 +286,24 @@ class MarkingState: ObservableObject {
         return formatTimestamp(inPoint)
     }
 
-    /// Update a still's position (for drag editing)
+    /// Update a still's position (for drag editing) — promotes to manual
     func updateStillPosition(id: UUID, to newTime: Double) {
         guard let index = markedStills.firstIndex(where: { $0.id == id }) else { return }
         let oldTime = markedStills[index].timestamp
+        let wasManual = markedStills[index].isManual
         let clampedTime = max(0, min(videoDuration > 0 ? videoDuration : newTime, newTime))
         markedStills[index].timestamp = clampedTime
+        markedStills[index].isManual = true  // Dragging promotes to manual
         markedStills.sort { $0.timestamp < $1.timestamp }
-        undoStack.append(.movedStill(id: id, from: oldTime, to: clampedTime))
+        recordUndo(.movedStill(id: id, from: oldTime, to: clampedTime, wasManual: wasManual))
     }
 
-    /// Update a clip's in/out points (for drag editing)
+    /// Update a clip's in/out points (for drag editing) — promotes to manual
     func updateClipRange(id: UUID, inPoint: Double?, outPoint: Double?, snapEnabled: Bool = false) {
         guard let index = markedClips.firstIndex(where: { $0.id == id }) else { return }
         let oldIn = markedClips[index].inPoint
         let oldOut = markedClips[index].outPoint
+        let wasManual = markedClips[index].isManual
         var clip = markedClips[index]
 
         if let newIn = inPoint {
@@ -289,9 +314,20 @@ class MarkingState: ObservableObject {
             let snapped = snapEnabled ? snapToNearestCut(newOut) : newOut
             clip.outPoint = max(clip.inPoint + 0.1, snapped)
         }
+        clip.isManual = true  // Dragging promotes to manual
 
         markedClips[index] = clip
         markedClips.sort { $0.inPoint < $1.inPoint }
-        undoStack.append(.modifiedClipRange(id: id, oldIn: oldIn, oldOut: oldOut))
+        recordUndo(.modifiedClipRange(id: id, oldIn: oldIn, oldOut: oldOut, wasManual: wasManual))
+    }
+
+    /// Clear only auto-generated stills (preserves manual ones)
+    func clearAutoStills() {
+        markedStills.removeAll { !$0.isManual }
+    }
+
+    /// Clear only auto-generated clips (preserves manual ones)
+    func clearAutoClips() {
+        markedClips.removeAll { !$0.isManual }
     }
 }
