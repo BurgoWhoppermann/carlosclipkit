@@ -2071,7 +2071,7 @@ struct ManualTimelineView: View {
                     NSCursor.arrow.set()
                 }
             }
-            .gesture(
+            .simultaneousGesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .named("timeline"))
                     .onChanged { value in
                         guard draggingStillId == nil && draggingClipId == nil else { return }
@@ -2185,6 +2185,15 @@ struct ManualTimelineView: View {
                         .offset(x: min(maxOffset, max(0, offsetFraction * maxOffset)))
                 }
                 .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            let fraction = max(0, min(1, value.location.x / barWidth))
+                            let time = Double(fraction) * duration
+                            onSeek(max(0, min(duration, time)))
+                        }
+                )
             }
         } else {
             Spacer()
