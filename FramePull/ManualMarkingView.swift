@@ -108,13 +108,14 @@ struct ManualMarkingView: View {
                 }
 
                 // Marked items list — low priority so it compresses before the export button hides
-                ScrollView {
+                ScrollView(showsIndicators: true) {
                     VStack(spacing: 16) {
                         stillsSection
                         clipsSection
                     }
                     .padding()
                 }
+                .scrollIndicators(.visible)
                 .layoutPriority(-1)
 
                 Divider()
@@ -847,6 +848,9 @@ struct ManualMarkingView: View {
                 },
                 onStillRemoved: { id in
                     markingState.removeStill(id: id)
+                },
+                onClipRemoved: { id in
+                    markingState.removeClip(id: id)
                 },
                 onClipRangeChanged: { id, newIn, newOut in
                     markingState.updateClipRange(id: id, inPoint: newIn, outPoint: newOut, snapEnabled: appState.snapToSceneCuts)
@@ -1737,6 +1741,7 @@ struct ManualTimelineView: View {
     let pendingInPoint: Double?
     let onStillPositionChanged: (UUID, Double) -> Void
     let onStillRemoved: (UUID) -> Void
+    let onClipRemoved: (UUID) -> Void
     let onClipRangeChanged: (UUID, Double?, Double?) -> Void
     let onLoopClip: (UUID) -> Void
     var loopingClipId: UUID? = nil
@@ -1884,6 +1889,17 @@ struct ManualTimelineView: View {
                     .contentShape(Rectangle())
                     .onHover { hovering in
                         hoveredClipBarId = hovering ? clip.id : nil
+                    }
+                    .simultaneousGesture(
+                        TapGesture(count: 2)
+                            .onEnded { onClipRemoved(clip.id) }
+                    )
+                    .contextMenu {
+                        Button(role: .destructive) { onClipRemoved(clip.id) } label: {
+                            Label("Delete Clip", systemImage: "trash")
+                        }
+                        Divider()
+                        Text("Double-click to delete").foregroundColor(.secondary)
                     }
                     .position(x: displayInX + clipWidth / 2, y: clipY)
 
@@ -2040,6 +2056,13 @@ struct ManualTimelineView: View {
                                     onStillRemoved(still.id)
                                 }
                         )
+                        .contextMenu {
+                            Button(role: .destructive) { onStillRemoved(still.id) } label: {
+                                Label("Delete Still", systemImage: "trash")
+                            }
+                            Divider()
+                            Text("Double-click to delete").foregroundColor(.secondary)
+                        }
                         .highPriorityGesture(
                             DragGesture(minimumDistance: 1, coordinateSpace: .named("timeline"))
                                 .onChanged { value in
@@ -2502,6 +2525,7 @@ struct MarkerPreviewView: View {
                             let key = items[idx].key
                             if isClip, let gifURL = clipGIFURLs[key] {
                                 AnimatedGIFView(url: gifURL)
+                                    .id(key) // Force recreation when switching clips
                                     .aspectRatio(contentMode: .fit).cornerRadius(8)
                             } else if let img = thumbnails[key] {
                                 Image(nsImage: img).resizable()
@@ -2534,18 +2558,16 @@ struct MarkerPreviewView: View {
 
     // MARK: - Preview generation
 
-    /// Generates all preview assets up front before showing the grid.
-    /// Progress weights: each thumbnail = 1 unit, each GIF ≈ 6 units (much slower).
+    /// Phase 1: generates 640-px thumbnails (fast, behind the loading screen).
+    /// Phase 2: generates lightweight animated GIFs (10 fps, max 5 s) lazily
+    ///          *after* the grid is already visible — they pop in as they finish.
     private func generateAllPreviews() async {
-        let stills     = Array(markedStills.prefix(30))
-        let clipThumb  = Array(markedClips.prefix(30))
-        let clipGIF    = Array(markedClips.prefix(20))
+        let stills    = Array(markedStills.prefix(30))
+        let clipThumb = Array(markedClips.prefix(30))
+        let total     = max(1, Double(stills.count + clipThumb.count))
+        var done      = 0.0
 
-        let gifWeight  = 6.0
-        let total      = Double(stills.count + clipThumb.count) + Double(clipGIF.count) * gifWeight
-        var done       = 0.0
-
-        // ── 640-px thumbnails (used for both grid cells and lightbox) ──────
+        // ── Phase 1: thumbnails only (fast) ───────────────────────────────
         let asset = AVURLAsset(url: videoURL)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
@@ -2558,7 +2580,7 @@ struct MarkerPreviewView: View {
                 await MainActor.run { thumbnails["still_\(still.id)"] = img }
             }
             done += 1
-            await MainActor.run { loadingProgress = done / max(1, total) }
+            await MainActor.run { loadingProgress = done / total }
         }
         for clip in clipThumb {
             let t = CMTime(seconds: clip.inPoint, preferredTimescale: 600)
@@ -2567,19 +2589,22 @@ struct MarkerPreviewView: View {
                 await MainActor.run { thumbnails["clip_\(clip.id)"] = img }
             }
             done += 1
-            await MainActor.run { loadingProgress = done / max(1, total) }
+            await MainActor.run { loadingProgress = done / total }
         }
 
-        // ── Animated GIFs (320 px, 25 fps, max 15 s) ──────────────────────
+        // Show the grid immediately — GIFs will appear as they finish
+        await MainActor.run { loadingProgress = 1; isLoadingPreviews = false }
+
+        // ── Phase 2: lightweight GIFs (10 fps, max 5 s) ───────────────────
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("FramePullPreviews", isDirectory: true)
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        for clip in clipGIF {
+        for clip in markedClips.prefix(20) {
             let clipKey  = "clip_\(clip.id)"
             let gifURL   = tempDir.appendingPathComponent("\(clip.id).gif")
-            let maxDur   = min(clip.duration, 15.0)
-            let fps      = 25
+            let maxDur   = clip.duration
+            let fps      = 10
             let frames   = max(1, Int(maxDur * Double(fps)))
             let interval = maxDur / Double(frames)
             let delay    = 1.0 / Double(fps)
@@ -2592,7 +2617,7 @@ struct MarkerPreviewView: View {
 
             guard let dest = CGImageDestinationCreateWithURL(
                 gifURL as CFURL, UTType.gif.identifier as CFString, frames, nil
-            ) else { done += gifWeight; await MainActor.run { loadingProgress = done / max(1, total) }; continue }
+            ) else { continue }
 
             CGImageDestinationSetProperties(dest, [
                 kCGImagePropertyGIFDictionary as String: [kCGImagePropertyGIFLoopCount as String: 0]
@@ -2613,12 +2638,7 @@ struct MarkerPreviewView: View {
             if ok && CGImageDestinationFinalize(dest) {
                 await MainActor.run { clipGIFURLs[clipKey] = gifURL }
             }
-
-            done += gifWeight
-            await MainActor.run { loadingProgress = done / max(1, total) }
         }
-
-        await MainActor.run { loadingProgress = 1; isLoadingPreviews = false }
     }
 
     private func cleanupTempGIFs() {
@@ -2634,6 +2654,8 @@ struct MarkerPreviewView: View {
 struct AnimatedGIFView: NSViewRepresentable {
     let url: URL
 
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> NSImageView {
         let imageView = NSImageView()
         imageView.animates = true
@@ -2642,13 +2664,20 @@ struct AnimatedGIFView: NSViewRepresentable {
         if let image = NSImage(contentsOf: url) {
             imageView.image = image
         }
+        context.coordinator.currentURL = url
         return imageView
     }
 
     func updateNSView(_ nsView: NSImageView, context: Context) {
-        if nsView.image == nil, let image = NSImage(contentsOf: url) {
-            nsView.image = image
+        // Reload when the URL changes (e.g. navigating between clips in the lightbox)
+        if context.coordinator.currentURL != url {
+            context.coordinator.currentURL = url
+            nsView.image = NSImage(contentsOf: url)
+        } else if nsView.image == nil {
+            nsView.image = NSImage(contentsOf: url)
         }
         nsView.animates = true
     }
+
+    class Coordinator { var currentURL: URL? }
 }
