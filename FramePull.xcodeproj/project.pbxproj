@@ -10,7 +10,6 @@
 		A1000001 /* FramePullApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000002 /* FramePullApp.swift */; };
 		A1000003 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000004 /* ContentView.swift */; };
 		A1000005 /* VideoProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000006 /* VideoProcessor.swift */; };
-		A1000023 /* GIFProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000024 /* GIFProcessor.swift */; };
 		A1000025 /* VideoSnippetProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000026 /* VideoSnippetProcessor.swift */; };
 		A1000027 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000028 /* Assets.xcassets */; };
 		A1000029 /* SceneDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000030 /* SceneDetector.swift */; };
@@ -20,7 +19,6 @@
 		A1SPLASH02 /* BetaSplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1SPLASH01 /* BetaSplashView.swift */; };
 		A1000037 /* ExportSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000038 /* ExportSettingsView.swift */; };
 		A1000050 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A1000051 /* PrivacyInfo.xcprivacy */; };
-		A1ANALYZE02 /* AnalysisSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1ANALYZE01 /* AnalysisSettingsView.swift */; };
 		A1PROCUTIL02 /* ProcessingUtilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1PROCUTIL01 /* ProcessingUtilities.swift */; };
 		A1VID0T02 /* VideoTutorial1.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = A1VID0T01 /* VideoTutorial1.mp4 */; };
 		A1LUT002 /* LUTProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1LUT001 /* LUTProcessor.swift */; };
@@ -33,7 +31,6 @@
 		A1000006 /* VideoProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoProcessor.swift; sourceTree = "<group>"; };
 		A1000007 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A1000008 /* FramePull.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FramePull.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		A1000024 /* GIFProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GIFProcessor.swift; sourceTree = "<group>"; };
 		A1000026 /* VideoSnippetProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoSnippetProcessor.swift; sourceTree = "<group>"; };
 		A1000028 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A1000030 /* SceneDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDetector.swift; sourceTree = "<group>"; };
@@ -43,7 +40,6 @@
 		A1SPLASH01 /* BetaSplashView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetaSplashView.swift; sourceTree = "<group>"; };
 		A1000038 /* ExportSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportSettingsView.swift; sourceTree = "<group>"; };
 		A1000051 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		A1ANALYZE01 /* AnalysisSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalysisSettingsView.swift; sourceTree = "<group>"; };
 		A1PROCUTIL01 /* ProcessingUtilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingUtilities.swift; sourceTree = "<group>"; };
 		A1VID0T01 /* VideoTutorial1.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = VideoTutorial1.mp4; sourceTree = "<group>"; };
 		A1LUT001 /* LUTProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LUTProcessor.swift; sourceTree = "<group>"; };
@@ -77,11 +73,9 @@
 				A1000036 /* ManualMarkingView.swift */,
 				A1SPLASH01 /* BetaSplashView.swift */,
 				A1000038 /* ExportSettingsView.swift */,
-				A1ANALYZE01 /* AnalysisSettingsView.swift */,
 				A1000032 /* MarkingState.swift */,
 				A1000034 /* VideoPlayerRepresentable.swift */,
 				A1000006 /* VideoProcessor.swift */,
-				A1000024 /* GIFProcessor.swift */,
 				A1000026 /* VideoSnippetProcessor.swift */,
 				A1000030 /* SceneDetector.swift */,
 				A1PROCUTIL01 /* ProcessingUtilities.swift */,
@@ -201,11 +195,9 @@
 				A1000031 /* MarkingState.swift in Sources */,
 				A1000033 /* VideoPlayerRepresentable.swift in Sources */,
 				A1000005 /* VideoProcessor.swift in Sources */,
-				A1000023 /* GIFProcessor.swift in Sources */,
 				A1000025 /* VideoSnippetProcessor.swift in Sources */,
 				A1000029 /* SceneDetector.swift in Sources */,
 				A1000037 /* ExportSettingsView.swift in Sources */,
-				A1ANALYZE02 /* AnalysisSettingsView.swift in Sources */,
 				A1PROCUTIL02 /* ProcessingUtilities.swift in Sources */,
 				A1LUT002 /* LUTProcessor.swift in Sources */,
 			);
