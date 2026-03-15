@@ -73,8 +73,12 @@ enum ProcessingUtilities {
         return context.makeImage() ?? image
     }
 
-    /// Center-crop an image to the specified aspect ratio
-    static func cropImageToAspectRatio(_ image: CGImage, targetRatio: CGFloat) -> CGImage {
+    /// Crop an image to the specified aspect ratio with adjustable horizontal position
+    /// - Parameters:
+    ///   - image: Source image
+    ///   - targetRatio: Target width/height ratio (e.g. 9/16 = 0.5625)
+    ///   - horizontalOffset: Horizontal crop position (0.0 = far left, 0.5 = center, 1.0 = far right)
+    static func cropImageToAspectRatio(_ image: CGImage, targetRatio: CGFloat, horizontalOffset: CGFloat = 0.5) -> CGImage {
         let imageWidth = CGFloat(image.width)
         let imageHeight = CGFloat(image.height)
         let currentRatio = imageWidth / imageHeight
@@ -83,7 +87,7 @@ enum ProcessingUtilities {
         if currentRatio > targetRatio {
             // Image is wider than target — crop sides
             let newWidth = imageHeight * targetRatio
-            let xOffset = (imageWidth - newWidth) / 2
+            let xOffset = (imageWidth - newWidth) * horizontalOffset
             cropRect = CGRect(x: xOffset, y: 0, width: newWidth, height: imageHeight)
         } else {
             // Image is taller than target — crop top/bottom

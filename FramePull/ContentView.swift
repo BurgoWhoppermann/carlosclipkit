@@ -69,6 +69,7 @@ struct ContentView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.framePullBlue)
+                    .help("Browse for a video file to import")
 
                     Text("MP4, MOV")
                         .font(.caption)
@@ -87,13 +88,13 @@ struct ContentView: View {
     private var versionFooter: some View {
         HStack {
             Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")")
-                .font(.caption2)
-                .foregroundColor(.secondary)
+                .font(.system(size: 9))
+                .foregroundColor(.secondary.opacity(0.6))
 
             Spacer()
         }
         .padding(.horizontal, 4)
-        .padding(.top, 8)
+        .padding(.top, 2)
     }
 
     // MARK: - Actions

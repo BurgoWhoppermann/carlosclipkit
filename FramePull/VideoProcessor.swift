@@ -485,6 +485,7 @@ class VideoProcessor {
         export9x16: Bool = false,
         lutCubeDimension: Int? = nil,
         lutCubeData: Data? = nil,
+        reframeOffsets: [CGFloat]? = nil,
         progress: @escaping (Double, String) -> Void = { _, _ in }
     ) async throws {
         guard !timestamps.isEmpty else { return }
@@ -504,13 +505,17 @@ class VideoProcessor {
         defer { imageGenerator.cancelAllCGImageGeneration() }
 
         let videoName = videoURL.deletingPathExtension().lastPathComponent
-        let sortedTimestamps = timestamps.sorted()
+
+        // Pair timestamps with their reframe offsets, then sort by timestamp
+        let offsets = reframeOffsets ?? Array(repeating: CGFloat(0.5), count: timestamps.count)
+        let paired = zip(timestamps, offsets).sorted { $0.0 < $1.0 }
 
         // Find next available index so re-exports never overwrite existing files
         let stillsDir = ProcessingUtilities.ensureSubdirectory(outputDirectory, path: "stills")
         let startingIndex = ProcessingUtilities.findNextAvailableIndex(in: stillsDir, prefix: "\(videoName)_still", suffix: ".\(format.fileExtension)")
 
-        for (index, timestamp) in sortedTimestamps.enumerated() {
+        for (index, pair) in paired.enumerated() {
+            let (timestamp, reframeOffset) = pair
             let fileIndex = startingIndex + index - 1  // saveFrame uses index+1 for filename
             progress(Double(index) / Double(timestamps.count), "Extracting still \(index + 1) of \(timestamps.count)...")
 
@@ -530,15 +535,16 @@ class VideoProcessor {
                 // Save original
                 try saveFrame(cgImage, index: fileIndex, videoName: videoName, outputDirectory: outputDirectory, format: format)
 
-                // Save 4:5 crop variant (same index for consistency)
+                // Save 4:5 crop variant — uses reframe offset only when 9:16 is not also enabled
                 if export4x5 {
-                    let cropped = ProcessingUtilities.cropImageToAspectRatio(cgImage, targetRatio: 4.0 / 5.0)
+                    let use4x5Offset = !export9x16
+                    let cropped = ProcessingUtilities.cropImageToAspectRatio(cgImage, targetRatio: 4.0 / 5.0, horizontalOffset: use4x5Offset ? reframeOffset : 0.5)
                     try saveFrame(cropped, index: fileIndex, videoName: videoName, outputDirectory: outputDirectory, format: format, subdirectory: "stills/4x5")
                 }
 
-                // Save 9:16 crop variant (same index for consistency)
+                // Save 9:16 crop variant with per-still reframe offset
                 if export9x16 {
-                    let cropped = ProcessingUtilities.cropImageToAspectRatio(cgImage, targetRatio: 9.0 / 16.0)
+                    let cropped = ProcessingUtilities.cropImageToAspectRatio(cgImage, targetRatio: 9.0 / 16.0, horizontalOffset: reframeOffset)
                     try saveFrame(cropped, index: fileIndex, videoName: videoName, outputDirectory: outputDirectory, format: format, subdirectory: "stills/9x16")
                 }
             } catch {

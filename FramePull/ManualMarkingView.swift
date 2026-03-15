@@ -127,22 +127,24 @@ struct ManualMarkingView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.framePullBlue)
-                    .controlSize(.large)
+                    .controlSize(.regular)
                     .frame(maxWidth: .infinity)
                     .disabled(!markingState.hasMarkedItems)
+                    .help("Configure and export marked stills and clips")
 
                     Button(action: { showShortcuts = true }) {
                         Image(systemName: "keyboard")
-                            .font(.system(size: 14))
+                            .font(.system(size: 12))
                             .foregroundColor(.secondary)
-                            .frame(width: 28, height: 28)
+                            .frame(width: 24, height: 24)
                             .background(Color.secondary.opacity(0.12))
-                            .cornerRadius(6)
+                            .cornerRadius(5)
                     }
                     .buttonStyle(.plain)
                     .help("Keyboard Shortcuts")
                 }
-                .padding()
+                .padding(.horizontal)
+                .padding(.vertical, 6)
             }
             .onChange(of: geometry.size.height) { newHeight in
                 let maxPlayerHeight = max(120, newHeight - fixedChromeHeight)
@@ -391,6 +393,7 @@ struct ManualMarkingView: View {
             .buttonStyle(.borderedProminent)
             .tint(.framePullAmber)
             .controlSize(.regular)
+            .help("Open auto-generation panel to create markers from scene analysis")
 
             if markingState.hasMarkedItems {
                 Button(action: { markingState.clearAll() }) {
@@ -399,6 +402,7 @@ struct ManualMarkingView: View {
                 .buttonStyle(.bordered)
                 .tint(.red)
                 .controlSize(.regular)
+                .help("Remove all stills and clips")
             }
         }
         .animation(.easeInOut(duration: 0.3), value: hasGenerated)
@@ -588,6 +592,7 @@ struct ManualMarkingView: View {
                         .fill(Color.gray.opacity(0.5))
                         .frame(width: 40, height: 3)
                 )
+                .help("Drag to resize video player")
                 .onHover { hovering in
                     if hovering {
                         NSCursor.resizeUpDown.push()
@@ -718,6 +723,7 @@ struct ManualMarkingView: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+        .help("Apply a color LUT to the preview and exported files")
     }
 
     private func chooseUserLUTFolder() {
@@ -758,6 +764,7 @@ struct ManualMarkingView: View {
                         .buttonStyle(.bordered)
                         .tint(markingState.playbackSpeed == speed ? .framePullBlue : .secondary)
                         .controlSize(.small)
+                        .help("Playback speed \(speed.displayName)")
                     }
                 }
 
@@ -810,6 +817,7 @@ struct ManualMarkingView: View {
                 }
                 .toggleStyle(.checkbox)
                 .controlSize(.small)
+                .help("Snap IN/OUT points to nearest detected cut")
 
                 // LUT selector menu
                 lutMenuButton
@@ -916,6 +924,7 @@ struct ManualMarkingView: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
+                .help("Close auto-generation panel")
             }
 
             // ── Stills ──
@@ -942,8 +951,10 @@ struct ManualMarkingView: View {
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 40)
                             .multilineTextAlignment(.center)
+                            .help("Number of stills to generate")
                         Stepper("", value: $appState.stillCount, in: 1...100)
                             .labelsHidden()
+                            .help("Adjust still count")
                     }
 
                     HStack(spacing: 6) {
@@ -957,6 +968,7 @@ struct ManualMarkingView: View {
                         }
                         .pickerStyle(.segmented)
                         .labelsHidden()
+                        .help("How stills are distributed — evenly across video, per scene, or at detected faces")
                     }
                 }
                 .disabled(!appState.exportStillsEnabled)
@@ -987,8 +999,10 @@ struct ManualMarkingView: View {
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 40)
                             .multilineTextAlignment(.center)
+                            .help("Number of clips to generate")
                         Stepper("", value: $appState.clipCount, in: 1...50)
                             .labelsHidden()
+                            .help("Adjust clip count")
                     }
 
                     VStack(alignment: .leading, spacing: 2) {
@@ -1003,6 +1017,7 @@ struct ManualMarkingView: View {
                                 .tint(.framePullBlue)
                                 .frame(minWidth: 80)
                                 .disabled(effectiveScenes.count <= 1)
+                                .help("How many detected scenes each clip spans")
                         }
                         HStack(spacing: 6) {
                             // Invisible spacer matching the label width
@@ -1034,6 +1049,7 @@ struct ManualMarkingView: View {
                     Toggle("Allow overlapping", isOn: $appState.allowOverlapping)
                         .toggleStyle(.checkbox)
                         .font(.caption)
+                        .help("Allow generated clips to overlap in time")
                 }
                 .disabled(!appState.exportMovingClipsEnabled)
                 .opacity(appState.exportMovingClipsEnabled ? 1 : 0.4)
@@ -1054,6 +1070,7 @@ struct ManualMarkingView: View {
                 .tint(.framePullAmber)
                 .controlSize(.regular)
                 .disabled(!appState.exportStillsEnabled && !appState.exportMovingClipsEnabled)
+                .help("Generate markers based on current settings")
                 .scaleEffect(!hasGenerated && generateButtonGlow ? 1.06 : 1.0)
                 .shadow(color: !hasGenerated ? Color.framePullAmber.opacity(generateButtonGlow ? 0.7 : 0.0) : .clear, radius: 8)
                 .onAppear {
@@ -1110,6 +1127,7 @@ struct ManualMarkingView: View {
             .buttonStyle(.plain)
             .foregroundColor(.secondary)
             .font(.caption)
+            .help("Cancel the pending IN point")
         }
         .padding(.horizontal)
         .padding(.vertical, 6)
@@ -1328,6 +1346,7 @@ struct ManualMarkingView: View {
                         step: 0.05
                     )
                     .tint(.framePullBlue)
+                    .help("Adjust how many scene changes are detected")
                     Text("More")
                         .font(.caption2)
                         .foregroundColor(.secondary)
@@ -1347,6 +1366,7 @@ struct ManualMarkingView: View {
             .tint(.framePullBlue)
             .controlSize(.regular)
             .disabled(isDetectingScenes)
+            .help("Analyze video for scene changes")
 
             // Inline progress
             if isDetectingScenes || appState.isDetectingScenes {
@@ -2316,8 +2336,12 @@ struct KeyboardShortcutsView: View {
 
 struct MarkerPreviewView: View {
     let videoURL: URL
-    let markedStills: [MarkedStill]
-    let markedClips: [MarkedClip]
+    @ObservedObject var markingState: MarkingState
+    /// Which aspect ratio to show the reframe slider for (nil = no reframe, 9:16 takes priority over 4:5)
+    let reframeRatio: VideoSnippetProcessor.AspectRatioCrop?
+
+    private var markedStills: [MarkedStill] { markingState.markedStills }
+    private var markedClips: [MarkedClip] { markingState.markedClips }
 
     @Environment(\.dismiss) private var dismiss
 
@@ -2332,6 +2356,11 @@ struct MarkerPreviewView: View {
     // Lightbox
     @State private var lightboxIndex: Int? = nil
     @State private var lightboxKeyMonitor: Any? = nil
+
+    // Reframe
+    @State private var localReframeOffset: CGFloat = 0.5
+    @State private var dragStartOffset: CGFloat = 0.5
+    @State private var isDraggingReframe = false
 
     private let thumbWidth: CGFloat = 160
     private let thumbHeight: CGFloat = 90
@@ -2348,12 +2377,13 @@ struct MarkerPreviewView: View {
             VStack(alignment: .leading, spacing: 12) {
                 // Header — always visible
                 HStack {
-                    Text("Marker Preview").font(.headline)
+                    Text("Preview & Reframe").font(.headline)
                     Spacer()
                     Button { dismiss() } label: {
                         Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .help("Close preview")
                 }
 
                 if isLoadingPreviews {
@@ -2466,16 +2496,26 @@ struct MarkerPreviewView: View {
                 if let m = lightboxKeyMonitor { NSEvent.removeMonitor(m); lightboxKeyMonitor = nil }
             }
             .onChange(of: lightboxIndex) { newIdx in
-                if newIdx != nil, lightboxKeyMonitor == nil {
-                    lightboxKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                        switch event.keyCode {
-                        case 123: if let i = self.lightboxIndex, i > 0 { self.lightboxIndex = i - 1 }; return nil
-                        case 124: if let i = self.lightboxIndex, i < self.allItems.count - 1 { self.lightboxIndex = i + 1 }; return nil
-                        case 53: self.lightboxIndex = nil; return nil
-                        default: return event
+                if let idx = newIdx {
+                    // Sync reframe slider with current item's offset
+                    let key = allItems[idx].key
+                    if key.hasPrefix("still_"), let id = UUID(uuidString: String(key.dropFirst(6))) {
+                        localReframeOffset = markedStills.first { $0.id == id }?.reframeOffset ?? 0.5
+                    } else if key.hasPrefix("clip_"), let id = UUID(uuidString: String(key.dropFirst(5))) {
+                        localReframeOffset = markedClips.first { $0.id == id }?.reframeOffset ?? 0.5
+                    }
+
+                    if lightboxKeyMonitor == nil {
+                        lightboxKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                            switch event.keyCode {
+                            case 123: if let i = self.lightboxIndex, i > 0 { self.lightboxIndex = i - 1 }; return nil
+                            case 124: if let i = self.lightboxIndex, i < self.allItems.count - 1 { self.lightboxIndex = i + 1 }; return nil
+                            case 53: self.lightboxIndex = nil; return nil
+                            default: return event
+                            }
                         }
                     }
-                } else if newIdx == nil, let m = lightboxKeyMonitor {
+                } else if let m = lightboxKeyMonitor {
                     NSEvent.removeMonitor(m)
                     lightboxKeyMonitor = nil
                 }
@@ -2507,6 +2547,7 @@ struct MarkerPreviewView: View {
                                 .font(.title3).foregroundColor(.white.opacity(0.8))
                         }
                         .buttonStyle(.plain)
+                        .help("Close lightbox (Esc)")
                     }
                     .padding(.horizontal, 16).padding(.top, 16)
 
@@ -2518,24 +2559,38 @@ struct MarkerPreviewView: View {
                                 .frame(width: 44)
                         }
                         .buttonStyle(.plain).disabled(idx == 0)
+                        .help("Previous (←)")
 
                         // Image is always pre-loaded — no async work here
                         Group {
                             let isClip = idx >= markedStills.count
                             let key = items[idx].key
                             if isClip, let gifURL = clipGIFURLs[key] {
-                                AnimatedGIFView(url: gifURL)
-                                    .id(key) // Force recreation when switching clips
-                                    .aspectRatio(contentMode: .fit).cornerRadius(8)
+                                ZStack {
+                                    AnimatedGIFView(url: gifURL)
+                                        .id(key) // Force recreation when switching clips
+                                        .aspectRatio(contentMode: .fit).cornerRadius(8)
+                                    if reframeRatio != nil { reframeCropOverlay }
+                                }
                             } else if let img = thumbnails[key] {
-                                Image(nsImage: img).resizable()
-                                    .aspectRatio(contentMode: .fit).cornerRadius(8)
+                                ZStack {
+                                    Image(nsImage: img).resizable()
+                                        .aspectRatio(contentMode: .fit).cornerRadius(8)
+                                    if reframeRatio != nil { reframeCropOverlay }
+                                }
                             } else {
                                 ProgressView()
                             }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .padding(.vertical, 12)
+                        .contentShape(Rectangle())
+                        .gesture(reframeRatio != nil ? reframeDragGesture(for: items[idx].key) : nil)
+                        .onHover { hovering in
+                            if reframeRatio != nil {
+                                if hovering { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                            }
+                        }
 
                         Button { if idx < items.count - 1 { lightboxIndex = idx + 1 } } label: {
                             Image(systemName: "chevron.right")
@@ -2544,16 +2599,117 @@ struct MarkerPreviewView: View {
                                 .frame(width: 44)
                         }
                         .buttonStyle(.plain).disabled(idx == items.count - 1)
+                        .help("Next (→)")
                     }
                     .frame(maxHeight: .infinity)
 
                     Text(items[idx].caption)
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.white.opacity(0.7))
-                        .padding(.bottom, 16)
+
+                    // Reframe slider
+                    if let ratio = reframeRatio {
+                        let label = ratio == .ratio9x16 ? "9:16 Reframe" : "4:5 Reframe"
+                        VStack(spacing: 4) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "arrow.left.and.right")
+                                    .foregroundColor(.white.opacity(0.5))
+                                    .font(.caption2)
+                                Text(label)
+                                    .font(.caption)
+                                    .foregroundColor(.white.opacity(0.5))
+                                Spacer()
+                                if localReframeOffset != 0.5 {
+                                    Button("Reset") {
+                                        localReframeOffset = 0.5
+                                        commitReframeOffset(for: items[idx].key)
+                                    }
+                                    .font(.caption)
+                                    .foregroundColor(.white.opacity(0.4))
+                                    .buttonStyle(.plain)
+                                    .help("Reset crop position to center")
+                                }
+                            }
+                            Slider(value: $localReframeOffset, in: 0...1)
+                                .tint(.orange)
+                                .help("Slide to adjust crop position — or drag the image directly")
+                                .onChange(of: localReframeOffset) { _ in
+                                    commitReframeOffset(for: items[idx].key)
+                                }
+                        }
+                        .padding(.horizontal, 60)
+                    }
+
+                    Spacer().frame(height: 12)
                 }
             }
         }
+    }
+
+    // MARK: - Reframe helpers
+
+    /// Drag gesture for reframing — dragging left/right moves the crop window
+    private func reframeDragGesture(for key: String) -> some Gesture {
+        DragGesture(minimumDistance: 4)
+            .onChanged { value in
+                if !isDraggingReframe {
+                    isDraggingReframe = true
+                    dragStartOffset = localReframeOffset
+                }
+                // Drag right = move crop frame right = increase offset
+                let delta = value.translation.width / 300.0
+                localReframeOffset = max(0, min(1, dragStartOffset + delta))
+                commitReframeOffset(for: key)
+            }
+            .onEnded { _ in
+                isDraggingReframe = false
+                dragStartOffset = localReframeOffset
+            }
+    }
+
+    /// Commit the current slider value back to the MarkingState model
+    private func commitReframeOffset(for key: String) {
+        if key.hasPrefix("still_"), let id = UUID(uuidString: String(key.dropFirst(6))) {
+            markingState.updateReframeOffset(forStill: id, offset: localReframeOffset)
+        } else if key.hasPrefix("clip_"), let id = UUID(uuidString: String(key.dropFirst(5))) {
+            markingState.updateReframeOffset(forClip: id, offset: localReframeOffset)
+        }
+    }
+
+    /// Overlay that dims the areas outside the crop window for the active reframe ratio
+    private var reframeCropOverlay: some View {
+        GeometryReader { geo in
+            let viewW = geo.size.width
+            let viewH = geo.size.height
+            // Use the actual reframe ratio; assume 16:9 source (most common)
+            let sourceRatio: CGFloat = 16.0 / 9.0
+            let targetRatio: CGFloat = reframeRatio?.ratio ?? (9.0 / 16.0)
+
+            let cropWidthFraction = targetRatio / sourceRatio
+            let maxSlide = 1.0 - cropWidthFraction
+            let leftEdge = maxSlide * localReframeOffset
+            let rightEdge = leftEdge + cropWidthFraction
+
+            // Left dim region
+            Path { p in
+                p.addRect(CGRect(x: 0, y: 0, width: viewW * leftEdge, height: viewH))
+            }
+            .fill(Color.black.opacity(0.55))
+
+            // Right dim region
+            Path { p in
+                p.addRect(CGRect(x: viewW * rightEdge, y: 0, width: viewW * (1 - rightEdge), height: viewH))
+            }
+            .fill(Color.black.opacity(0.55))
+
+            // Crop border
+            Rectangle()
+                .stroke(Color.orange.opacity(0.6), lineWidth: 1.5)
+                .frame(width: viewW * cropWidthFraction, height: viewH)
+                .position(x: viewW * (leftEdge + cropWidthFraction / 2), y: viewH / 2)
+        }
+        .allowsHitTesting(false)
+        .cornerRadius(8)
     }
 
     // MARK: - Preview generation

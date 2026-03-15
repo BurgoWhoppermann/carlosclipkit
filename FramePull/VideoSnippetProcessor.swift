@@ -243,7 +243,8 @@ class VideoSnippetProcessor {
         presetName: String = AVAssetExportPresetHighestQuality,
         lutCubeDimension: Int? = nil,
         lutCubeData: Data? = nil,
-        muteAudio: Bool = false
+        muteAudio: Bool = false,
+        reframeOffset: CGFloat = 0.5
     ) async throws {
         let asset = AVURLAsset(url: videoURL)
 
@@ -300,6 +301,9 @@ class VideoSnippetProcessor {
         }
 
         // Export cropped versions if requested
+        // When both 4:5 and 9:16 are enabled, 9:16 uses the reframe offset; 4:5 stays center-cropped.
+        // When only 4:5 is enabled, 4:5 uses the reframe offset.
+        let use4x5Offset = export4x5 && !export9x16
         if export4x5 {
             if exportMP4 {
                 let videos4x5Dir = ProcessingUtilities.ensureSubdirectory(videosDir, path: "4x5")
@@ -314,7 +318,8 @@ class VideoSnippetProcessor {
                     aspectRatio: .ratio4x5,
                     outputURL: crop4x5ClipURL,
                     presetName: presetName,
-                    muteAudio: muteAudio
+                    muteAudio: muteAudio,
+                    horizontalOffset: use4x5Offset ? reframeOffset : 0.5
                 )
             }
 
@@ -333,7 +338,8 @@ class VideoSnippetProcessor {
                     aspectRatio: .ratio4x5,
                     outputURL: crop4x5GifURL,
                     lutCubeDimension: lutCubeDimension,
-                    lutCubeData: lutCubeData
+                    lutCubeData: lutCubeData,
+                    horizontalOffset: use4x5Offset ? reframeOffset : 0.5
                 )
             }
         }
@@ -352,7 +358,8 @@ class VideoSnippetProcessor {
                     aspectRatio: .ratio9x16,
                     outputURL: crop9x16ClipURL,
                     presetName: presetName,
-                    muteAudio: muteAudio
+                    muteAudio: muteAudio,
+                    horizontalOffset: reframeOffset
                 )
             }
 
@@ -371,13 +378,14 @@ class VideoSnippetProcessor {
                     aspectRatio: .ratio9x16,
                     outputURL: crop9x16GifURL,
                     lutCubeDimension: lutCubeDimension,
-                    lutCubeData: lutCubeData
+                    lutCubeData: lutCubeData,
+                    horizontalOffset: reframeOffset
                 )
             }
         }
     }
 
-    /// Export a cropped video clip with specified aspect ratio (center crop)
+    /// Export a cropped video clip with specified aspect ratio
     private func exportCroppedClip(
         from asset: AVURLAsset,
         startTime: Double,
@@ -386,7 +394,8 @@ class VideoSnippetProcessor {
         aspectRatio: AspectRatioCrop,
         outputURL: URL,
         presetName: String = AVAssetExportPresetHighestQuality,
-        muteAudio: Bool = false
+        muteAudio: Bool = false,
+        horizontalOffset: CGFloat = 0.5
     ) async throws {
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
             throw SnippetError.cannotLoadVideo
@@ -400,7 +409,7 @@ class VideoSnippetProcessor {
         let videoWidth = abs(transformedSize.width)
         let videoHeight = abs(transformedSize.height)
 
-        // Calculate crop rectangle (center crop to target aspect ratio)
+        // Calculate crop rectangle with adjustable horizontal position
         let targetRatio = aspectRatio.ratio
         let currentRatio = videoWidth / videoHeight
 
@@ -408,7 +417,7 @@ class VideoSnippetProcessor {
         if currentRatio > targetRatio {
             // Video is wider than target - crop sides
             let newWidth = videoHeight * targetRatio
-            let xOffset = (videoWidth - newWidth) / 2
+            let xOffset = (videoWidth - newWidth) * horizontalOffset
             cropRect = CGRect(x: xOffset, y: 0, width: newWidth, height: videoHeight)
         } else {
             // Video is taller than target - crop top/bottom
@@ -499,7 +508,8 @@ class VideoSnippetProcessor {
         aspectRatio: AspectRatioCrop? = nil,
         outputURL: URL,
         lutCubeDimension: Int? = nil,
-        lutCubeData: Data? = nil
+        lutCubeData: Data? = nil,
+        horizontalOffset: CGFloat = 0.5
     ) async throws {
         let frameCount = Int(duration * Double(frameRate))
         guard frameCount >= 1 else {
@@ -543,7 +553,7 @@ class VideoSnippetProcessor {
 
             do {
                 let (cgImage, _) = try await imageGenerator.image(at: time)
-                let cropped = aspectRatio.map { ProcessingUtilities.cropImageToAspectRatio(cgImage, targetRatio: $0.ratio) } ?? cgImage
+                let cropped = aspectRatio.map { ProcessingUtilities.cropImageToAspectRatio(cgImage, targetRatio: $0.ratio, horizontalOffset: horizontalOffset) } ?? cgImage
                 var outputImage = ProcessingUtilities.resizeImage(cropped, maxWidth: maxWidth)
                 // Apply LUT color correction if active
                 if let dim = lutCubeDimension, let data = lutCubeData {

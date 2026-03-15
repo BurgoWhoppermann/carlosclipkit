@@ -7,11 +7,14 @@ struct MarkedStill: Identifiable, Equatable {
     var timestamp: Double
     /// Whether this marker was placed/edited manually by the user (vs auto-generated)
     var isManual: Bool
+    /// Horizontal crop offset for 9:16 reframe (0.0 = far left, 0.5 = center, 1.0 = far right)
+    var reframeOffset: CGFloat = 0.5
 
-    init(timestamp: Double, id: UUID = UUID(), isManual: Bool = false) {
+    init(timestamp: Double, id: UUID = UUID(), isManual: Bool = false, reframeOffset: CGFloat = 0.5) {
         self.id = id
         self.timestamp = timestamp
         self.isManual = isManual
+        self.reframeOffset = reframeOffset
     }
 
     var formattedTime: String {
@@ -26,12 +29,15 @@ struct MarkedClip: Identifiable, Equatable {
     var outPoint: Double
     /// Whether this marker was placed/edited manually by the user (vs auto-generated)
     var isManual: Bool
+    /// Horizontal crop offset for 9:16 reframe (0.0 = far left, 0.5 = center, 1.0 = far right)
+    var reframeOffset: CGFloat = 0.5
 
-    init(inPoint: Double, outPoint: Double, id: UUID = UUID(), isManual: Bool = false) {
+    init(inPoint: Double, outPoint: Double, id: UUID = UUID(), isManual: Bool = false, reframeOffset: CGFloat = 0.5) {
         self.id = id
         self.inPoint = inPoint
         self.outPoint = outPoint
         self.isManual = isManual
+        self.reframeOffset = reframeOffset
     }
 
     var duration: Double {
@@ -333,5 +339,21 @@ class MarkingState: ObservableObject {
     /// Clear only auto-generated clips (preserves manual ones)
     func clearAutoClips() {
         markedClips.removeAll { !$0.isManual }
+    }
+
+    // MARK: - Reframe Offset
+
+    /// Update the 9:16 reframe offset for a still (no undo recording — export-time concern)
+    func updateReframeOffset(forStill id: UUID, offset: CGFloat) {
+        if let index = markedStills.firstIndex(where: { $0.id == id }) {
+            markedStills[index].reframeOffset = offset
+        }
+    }
+
+    /// Update the 9:16 reframe offset for a clip (no undo recording — export-time concern)
+    func updateReframeOffset(forClip id: UUID, offset: CGFloat) {
+        if let index = markedClips.firstIndex(where: { $0.id == id }) {
+            markedClips[index].reframeOffset = offset
+        }
     }
 }

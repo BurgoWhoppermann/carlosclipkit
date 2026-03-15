@@ -37,6 +37,7 @@ struct ExportSettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isExporting)
+                .help("Close export settings")
             }
 
             // Summary
@@ -53,12 +54,13 @@ struct ExportSettingsView: View {
                 }
                 Spacer()
                 Button(action: { showPreview = true }) {
-                    Label("Preview", systemImage: "eye")
+                    Label("Preview & Reframe", systemImage: "eye")
                         .font(.subheadline)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.framePullBlue)
                 .controlSize(.small)
+                .help("Preview markers and adjust 9:16 or 4:5 crop position")
             }
 
             Divider()
@@ -68,6 +70,7 @@ struct ExportSettingsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("Export stills", isOn: $appState.exportStillsEnabled)
                         .toggleStyle(.checkbox)
+                        .help("Include still frames in the export")
 
                     if appState.exportStillsEnabled {
                         HStack {
@@ -80,6 +83,7 @@ struct ExportSettingsView: View {
                             }
                             .pickerStyle(.segmented)
                             .frame(width: 200)
+                            .help("Choose image format — JPEG for smaller files, PNG for lossless, TIFF for maximum quality")
                         }
                         .padding(.leading, 20)
 
@@ -93,6 +97,7 @@ struct ExportSettingsView: View {
                             }
                             .pickerStyle(.segmented)
                             .frame(width: 140)
+                            .help("Scale factor for exported stills — 1x is full resolution")
                             if appState.videoSize != .zero {
                                 let w = Int(appState.videoSize.width * appState.stillSize.scale)
                                 let h = Int(appState.videoSize.height * appState.stillSize.scale)
@@ -117,6 +122,7 @@ struct ExportSettingsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("Export GIFs", isOn: $appState.exportGIF)
                         .toggleStyle(.checkbox)
+                        .help("Export each clip as an animated GIF")
 
                     if appState.exportGIF {
                         HStack {
@@ -130,6 +136,7 @@ struct ExportSettingsView: View {
                             }
                             .pickerStyle(.menu)
                             .frame(width: 180)
+                            .help("Maximum width of the exported GIF in pixels")
                         }
                         .padding(.leading, 20)
 
@@ -146,6 +153,7 @@ struct ExportSettingsView: View {
                             }
                             .pickerStyle(.menu)
                             .frame(width: 100)
+                            .help("Frames per second — higher is smoother but larger file size")
                         }
                         .padding(.leading, 20)
 
@@ -154,6 +162,7 @@ struct ExportSettingsView: View {
                                 .foregroundColor(.secondary)
                             Slider(value: $appState.gifQuality, in: 0.3...1.0, step: 0.1)
                                 .tint(.framePullBlue)
+                                .help("Color quality — lower values reduce file size")
                             Text("\(Int(appState.gifQuality * 100))%")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -174,6 +183,7 @@ struct ExportSettingsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("Export video clips", isOn: $appState.exportMP4)
                         .toggleStyle(.checkbox)
+                        .help("Export each clip as an MP4 video file")
 
                     if appState.exportMP4 {
                         HStack {
@@ -187,12 +197,14 @@ struct ExportSettingsView: View {
                             }
                             .pickerStyle(.menu)
                             .frame(width: 180)
+                            .help("Video export resolution — higher quality means larger files")
                         }
                         .padding(.leading, 20)
 
                         Toggle("Mute audio", isOn: $appState.muteAudio)
                             .toggleStyle(.checkbox)
                             .padding(.leading, 20)
+                            .help("Strip audio track from exported clips")
                     }
                 }
 
@@ -205,10 +217,13 @@ struct ExportSettingsView: View {
                     Toggle("Original", isOn: .constant(true))
                         .toggleStyle(.checkbox)
                         .disabled(true)
+                        .help("Original aspect ratio is always exported")
                     Toggle("4:5", isOn: $appState.export4x5)
                         .toggleStyle(.checkbox)
+                        .help("Also export a 4:5 vertical crop (Instagram portrait)")
                     Toggle("9:16", isOn: $appState.export9x16)
                         .toggleStyle(.checkbox)
+                        .help("Also export a 9:16 vertical crop (Stories / Reels / TikTok)")
                 }
             }
 
@@ -235,6 +250,7 @@ struct ExportSettingsView: View {
                     chooseLocation()
                 }
                 .tint(.framePullBlue)
+                .help("Select the folder where exported files will be saved")
             }
 
             // Export progress
@@ -258,6 +274,7 @@ struct ExportSettingsView: View {
             .tint(.framePullBlue)
             .controlSize(.large)
             .disabled(appState.saveURL == nil || isExporting || !appState.hasSelectedExportType)
+            .help("Export all marked stills and clips to the selected folder")
 
             Label("Files are always added — never overwritten", systemImage: "plus.circle")
                 .font(.caption)
@@ -269,8 +286,8 @@ struct ExportSettingsView: View {
         .sheet(isPresented: $showPreview) {
             MarkerPreviewView(
                 videoURL: videoURL,
-                markedStills: appState.markingState.markedStills,
-                markedClips: appState.markingState.markedClips
+                markingState: appState.markingState,
+                reframeRatio: appState.export9x16 ? .ratio9x16 : (appState.export4x5 ? .ratio4x5 : nil)
             )
         }
     }
@@ -343,6 +360,7 @@ struct ExportSettingsView: View {
         // Export stills
         if stillsCount > 0 {
             let timestamps = markingState.markedStills.map { $0.timestamp }
+            let reframeOffsets = markingState.markedStills.map { $0.reframeOffset }
             await MainActor.run {
                 exportStatusMessage = "Exporting stills..."
             }
@@ -356,7 +374,8 @@ struct ExportSettingsView: View {
                 export4x5: appState.export4x5,
                 export9x16: appState.export9x16,
                 lutCubeDimension: appState.lutEnabled ? appState.lutCubeDimension : nil,
-                lutCubeData: appState.lutCubeData
+                lutCubeData: appState.lutCubeData,
+                reframeOffsets: reframeOffsets
             ) { progress, message in
                 Task { @MainActor in
                     let stillsProgress = progress * Double(stillsCount) / Double(totalItems)
@@ -390,7 +409,8 @@ struct ExportSettingsView: View {
                     presetName: appState.clipQuality.exportPreset,
                     lutCubeDimension: appState.lutEnabled ? appState.lutCubeDimension : nil,
                     lutCubeData: appState.lutCubeData,
-                    muteAudio: appState.muteAudio
+                    muteAudio: appState.muteAudio,
+                    reframeOffset: clip.reframeOffset
                 )
 
                 completedItems += 1
