@@ -19,7 +19,7 @@
 Drop a video file into FramePull and it automatically detects every scene cut. From there you can mark stills, define clip ranges, and export — all from a single, focused interface.
 
 - **Still frames** — JPEG, PNG, or TIFF at full or half resolution
-- **Animated GIFs** — configurable resolution (320w–640w), frame rate, and quality
+- **Animated GIFs** — configurable resolution (480w–1080p), frame rate, and quality
 - **Video clips** — MP4 at 480p through 4K, with optional 4:5 and 9:16 crop variants
 - **LUT support** — load `.cube` files for real-time color correction preview, baked into exports
 
@@ -27,9 +27,11 @@ Drop a video file into FramePull and it automatically detects every scene cut. F
   <img src=".github/screenshots/timeline.png" width="720" alt="FramePull timeline with markers and clips" />
 </p>
 
-<p align="center">
-  <img src=".github/screenshots/timeline-2.png" width="720" alt="FramePull scene detection and manual marking" />
-</p>
+## Documentation
+
+Full user guide: **[docs/documentation.md](docs/documentation.md)**
+
+Topics: cut detection · manual & auto marking · timeline · LUT grading · Preview & Reframe · export settings · keyboard shortcuts · workflows
 
 ## Scene detection
 
@@ -54,7 +56,7 @@ Detected cuts appear as markers on the timeline. You can then auto-generate stil
 | **Blur rejection** | Skip blurry frames automatically |
 | **Mute audio** | Strip audio from exported clips with one toggle |
 | **Multi-lane clips** | Overlapping clip ranges stack on separate lanes |
-| **Aspect ratio crops** | Export 4:5 and 9:16 variants alongside originals |
+| **Aspect ratio crops** | Export 4:5 and 9:16 variants alongside originals, with per-clip reframe control |
 
 ## Built with
 
@@ -69,12 +71,6 @@ Zero external dependencies. FramePull is built entirely on Apple frameworks:
 ## Install
 
 **Mac App Store** — *coming soon*
-
-## Documentation
-
-Full user documentation is available in [`docs/documentation.md`](docs/documentation.md).
-
-Topics covered: getting started, cut detection, manual and auto-generated markers, timeline interaction, LUT color grading, Preview & Reframe, export settings, keyboard shortcuts, and common workflows.
 
 ## Feedback
 

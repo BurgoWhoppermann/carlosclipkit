@@ -4,11 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-FramePull is a native macOS SwiftUI application that extracts still frames, animated GIFs, and video clips from source videos using intelligent scene detection. It has zero external dependencies — only Apple frameworks (AVFoundation, Vision, CoreImage, ImageIO, AppKit, Combine).
+FramePull is a native macOS SwiftUI application that extracts still frames, animated GIFs, and video clips from source videos using intelligent scene detection. Zero external dependencies — only Apple frameworks (AVFoundation, Vision, CoreImage, ImageIO, AppKit, Combine).
+
+User documentation lives in [`docs/documentation.md`](docs/documentation.md).
 
 ## Build Commands
 
 ```bash
+# Always prefix with DEVELOPER_DIR if xcodebuild isn't found
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+
 # Build (Debug)
 xcodebuild -scheme FramePull -configuration Debug
 
@@ -26,42 +31,97 @@ There are no tests, linting, or CI/CD configured.
 
 ## Architecture
 
-### Two-Mode Design
+### App Entry & State
 
-The app has two extraction modes sharing a single `AppState` (ObservableObject):
+- **`FramePullApp.swift`** — App entry point. Defines `AppState` (central `ObservableObject`), all export enums (`OutputFormat`, `GIFResolution`, `StillFormat`, `StillSize`, `ClipQuality`, `StillPlacement`), brand colors, and the menu bar commands.
+- **`AppState`** — Holds video URL, export settings, scene detection results, LUT state, and a `MarkingState` child object. Owns the unified app-level undo stack.
 
-- **Auto Mode** (`ContentView.swift`) — Automatic scene detection places markers across detected scenes. Timeline visualization with draggable markers.
-- **Manual Mode** (`ManualMarkingView.swift`) — Frame-by-frame marking via keyboard shortcuts (S=still, I=in-point, O=out-point). Scene cut snapping, full undo/redo via `MarkingState`.
+### Views
 
-Mode switching syncs markers between the two views.
+| File | Role |
+|------|------|
+| `ContentView.swift` | Drop zone / import screen. Shown until a video is loaded, then replaced by `ManualMarkingView`. |
+| `ManualMarkingView.swift` | **Main UI.** Video player, timeline, marker controls, inline auto-generate panel, stills/clips list, export trigger. Also contains `ManualTimelineView`, `MarkerPreviewView`, `KeyboardShortcutsView`, and `AnimatedGIFView`. |
+| `ExportSettingsView.swift` | Sheet for configuring and running exports (format, quality, crop variants, output folder). |
+| `BetaSplashView.swift` | Launch splash / What's New screen (`SplashView`). Plays `VideoTutorial1.mp4` from the app bundle. |
+| `AnalysisSettingsView.swift` | ⚠️ **Unused** — old sheet-based generate dialog, superseded by the inline panel in `ManualMarkingView`. Safe to delete. |
 
 ### Processing Pipeline
 
-Three independent processor classes handle export:
+| Processor | Output | Notes |
+|-----------|--------|-------|
+| `VideoProcessor.swift` | Still images (JPEG/PNG/TIFF) | Face detection (Vision), blur rejection, per-still `reframeOffset` for 4:5/9:16 crops |
+| `VideoSnippetProcessor.swift` | MP4 clips **and** animated GIFs | Handles both via `exportClipAndGIF()`; per-clip `reframeOffset` for crop positioning |
+| `GIFProcessor.swift` | ⚠️ **Unused** — GIF export was moved into `VideoSnippetProcessor`. Safe to delete. |
+| `ProcessingUtilities.swift` | Shared helpers | `cropImageToAspectRatio(horizontalOffset:)`, `resizeImage`, `findNextAvailableIndex`, `ensureSubdirectory` |
+| `LUTProcessor.swift` | `.cube` LUT loading | Parses cube files, builds `CIFilter` for real-time preview and export baking |
+| `SceneDetector.swift` | Scene cut timestamps | Bhattacharyya distance on 8×8×8 RGB histograms; async with downsampled frames |
 
-| Processor | Output | Key Details |
-|-----------|--------|-------------|
-| `VideoProcessor` | Still images (JPEG/PNG/TIFF) | Optional face detection (Vision) and blur rejection |
-| `GIFProcessor` | Animated GIFs | Configurable resolution (320w/480w/640w), frame rate |
-| `VideoSnippetProcessor` | MP4 clips | Quality presets (480p–4K), optional 4:5 and 9:16 aspect ratio variants |
+### Marking State
 
-### Scene Detection (`SceneDetector.swift`)
+**`MarkingState.swift`** — ObservableObject owned by `AppState`. Tracks:
+- `markedStills: [MarkedStill]` — each with `timestamp`, `isManual`, `reframeOffset`
+- `markedClips: [MarkedClip]` — each with `inPoint`, `outPoint`, `isManual`, `reframeOffset`
+- `pendingInPoint` — waiting for the user to set an OUT point
+- `detectedCuts` — scene cut timestamps used for snap-to-cut
+- 50-step undo stack (`UndoAction` enum)
 
-Uses histogram-based frame comparison with **Bhattacharyya distance** on 8×8×8 RGB color histograms (512 bins). Key parameters: configurable thresholds for real cuts vs. motion, minimum scene duration to avoid micro-scenes. Runs asynchronously with downsampled frames.
+### Video Player
 
-### State Management
+**`VideoPlayerRepresentable.swift`** — `NSViewRepresentable` wrapping `AVPlayer` via a `LoopingPlayerController`. Features: looping, LUT composition via `AVMutableVideoComposition`, keyboard event forwarding, time observation, clip loop range, volume control, frame-step.
 
-- `AppState` (`FramePullApp.swift`) — Central ObservableObject holding video URL, extraction settings, detected scenes, still positions, export config.
-- `MarkingState` (`MarkingState.swift`) — Observable state for manual mode with undo/redo stack and pending clip ranges.
+## Key Data Flow
 
-### Video Player (`VideoPlayerRepresentable.swift`)
+```
+Drop video → AppState.videoURL set → ContentView → ManualMarkingView
+                                                         │
+                            ┌──── SceneDetector (async) ─┤
+                            │                            │
+                            ▼                            ▼
+                    markingState.detectedCuts    video player loads
+                            │
+                    Auto-generate or manual S/I/O keystrokes
+                            │
+                    markingState.markedStills / markedClips
+                            │
+                    ExportSettingsView → VideoProcessor / VideoSnippetProcessor
+                                                         │
+                                              /stills, /gifs, /videos
+                                           (+ /4x5 and /9x16 subdirs)
+```
 
-Custom `NSViewRepresentable` wrapping AVPlayer with looping playback, keyboard event capture, time observation for UI sync, and video dimension detection.
+## Export Output Structure
 
-## Key Enums (in `FramePullApp.swift`)
+```
+<output folder>/
+├── stills/
+│   ├── videoname_still_001.jpg
+│   ├── 4x5/videoname_still_001.jpg   (if export4x5 enabled)
+│   └── 9x16/videoname_still_001.jpg  (if export9x16 enabled)
+├── gifs/
+│   ├── videoname_clip_001.gif
+│   ├── 4x5/videoname_clip_001.gif
+│   └── 9x16/videoname_clip_001.gif
+└── videos/
+    ├── videoname_clip_001.mp4
+    ├── 4x5/videoname_clip_001.mp4
+    └── 9x16/videoname_clip_001.mp4
+```
 
-`ExtractionMode`, `OutputFormat`, `GIFResolution`, `StillFormat`, `StillSize`, `ClipQuality`, `PlaybackSpeed` — all defined alongside `AppState`.
+Sequential numbering (`_001`, `_002` …) prevents overwrites.
 
-## Export Workflow
+## Per-Item Reframe Offset
 
-Files are output to organized subdirectories (`/stills/`, `/gifs/`, `/videos/`) with optional `/4x5` and `/9x16` subdirectories for aspect ratio variants. Sequential numbering prevents overwrites.
+Each `MarkedStill` and `MarkedClip` stores a `reframeOffset: CGFloat` (0.0 = far left, 0.5 = center, 1.0 = far right). This controls the horizontal crop position when exporting 4:5 or 9:16 variants. Set via the drag gesture or slider in `MarkerPreviewView`.
+
+- `ProcessingUtilities.cropImageToAspectRatio(_:targetRatio:horizontalOffset:)` uses it for still crops.
+- `VideoSnippetProcessor.exportCroppedClip` uses it via `CGAffineTransform` translation for video crops.
+- When both 4:5 and 9:16 are enabled, 9:16 gets the reframe offset; 4:5 stays centered.
+
+## LUT System
+
+LUTs live in two places:
+- **Built-in**: `FramePull/LUTs/*.cube` (bundled in the app, ARRI / Canon / Sony log transforms)
+- **User folder**: Any folder the user points to via "Choose LUT Folder…" (stored as a security-scoped bookmark in `UserDefaults`)
+
+`LUTProcessor` parses `.cube` files into a flat `[Float]` array passed to `CIColorCubeWithColorSpace`. The player applies this via `AVVideoCompositionCoreAnimationTool`; exporters apply it via `CIContext`.
