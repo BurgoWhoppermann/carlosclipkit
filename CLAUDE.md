@@ -44,7 +44,6 @@ There are no tests, linting, or CI/CD configured.
 | `ManualMarkingView.swift` | **Main UI.** Video player, timeline, marker controls, inline auto-generate panel, stills/clips list, export trigger. Also contains `ManualTimelineView`, `MarkerPreviewView`, `KeyboardShortcutsView`, and `AnimatedGIFView`. |
 | `ExportSettingsView.swift` | Sheet for configuring and running exports (format, quality, crop variants, output folder). |
 | `BetaSplashView.swift` | Launch splash / What's New screen (`SplashView`). Plays `VideoTutorial1.mp4` from the app bundle. |
-| `AnalysisSettingsView.swift` | ⚠️ **Unused** — old sheet-based generate dialog, superseded by the inline panel in `ManualMarkingView`. Safe to delete. |
 
 ### Processing Pipeline
 
@@ -52,7 +51,6 @@ There are no tests, linting, or CI/CD configured.
 |-----------|--------|-------|
 | `VideoProcessor.swift` | Still images (JPEG/PNG/TIFF) | Face detection (Vision), blur rejection, per-still `reframeOffset` for 4:5/9:16 crops |
 | `VideoSnippetProcessor.swift` | MP4 clips **and** animated GIFs | Handles both via `exportClipAndGIF()`; per-clip `reframeOffset` for crop positioning |
-| `GIFProcessor.swift` | ⚠️ **Unused** — GIF export was moved into `VideoSnippetProcessor`. Safe to delete. |
 | `ProcessingUtilities.swift` | Shared helpers | `cropImageToAspectRatio(horizontalOffset:)`, `resizeImage`, `findNextAvailableIndex`, `ensureSubdirectory` |
 | `LUTProcessor.swift` | `.cube` LUT loading | Parses cube files, builds `CIFilter` for real-time preview and export baking |
 | `SceneDetector.swift` | Scene cut timestamps | Bhattacharyya distance on 8×8×8 RGB histograms; async with downsampled frames |
@@ -125,3 +123,37 @@ LUTs live in two places:
 - **User folder**: Any folder the user points to via "Choose LUT Folder…" (stored as a security-scoped bookmark in `UserDefaults`)
 
 `LUTProcessor` parses `.cube` files into a flat `[Float]` array passed to `CIColorCubeWithColorSpace`. The player applies this via `AVVideoCompositionCoreAnimationTool`; exporters apply it via `CIContext`.
+
+## Recent Work (2026-03-15)
+
+### Per-clip reframe offset
+- Added `reframeOffset: CGFloat = 0.5` to both `MarkedStill` and `MarkedClip` structs in `MarkingState.swift`
+- Added `updateReframeOffset(forStill:offset:)` and `updateReframeOffset(forClip:offset:)` mutation methods
+- `VideoProcessor` now takes `reframeOffsets: [CGFloat]?` — offsets are paired with timestamps before sorting to maintain correct mapping
+- `VideoSnippetProcessor.exportClipAndGIF` takes `reframeOffset: CGFloat = 0.5`; passed through to `exportCroppedClip` and `createGIF`
+- Priority rule: when both 4:5 and 9:16 are enabled, 9:16 gets the reframe offset; 4:5 stays centered
+
+### Preview & Reframe UI (MarkerPreviewView in ManualMarkingView.swift)
+- Renamed "Preview" button/header to "Preview & Reframe"
+- `MarkerPreviewView` now takes `@ObservedObject var markingState: MarkingState` + `let reframeRatio: VideoSnippetProcessor.AspectRatioCrop?`
+- Lightbox shows a crop overlay (GeometryReader-based dim outside crop window) when `reframeRatio != nil`
+- Slider and drag gesture both control `localReframeOffset`; committed to `MarkingState` on release via `commitReframeOffset()`
+- Drag direction: positive translation → increase offset (crop frame moves right)
+- `NSCursor.resizeLeftRight` applied on hover over the image area
+
+### UI compression
+- Bottom export bar uses `.controlSize(.regular)` (was `.large`), padding reduced
+- Version footer uses `.system(size: 9)`, top padding reduced to 2pt
+
+### Tooltips
+- `.help()` modifiers added to ~40 interactive elements across `ExportSettingsView.swift`, `ManualMarkingView.swift`, and `ContentView.swift`
+
+### Documentation
+- `docs/documentation.md` — full user guide written and linked from README and Help menu
+- `FramePullApp.swift` Help menu command opens the local docs file via `NSWorkspace`
+
+### Cleanup
+- Deleted `AnalysisSettingsView.swift` (dead code — superseded by inline generate panel)
+- Deleted `GIFProcessor.swift` (dead code — GIF export lives in `VideoSnippetProcessor`)
+- Deleted root `/LUTs/` and root `VideoTutorial1.mp4` (duplicates not in app bundle)
+- Removed deleted files from `project.pbxproj`
