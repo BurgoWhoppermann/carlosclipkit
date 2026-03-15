@@ -166,6 +166,14 @@ struct FramePullApp: App {
                     showSplash = true
                 }
             }
+            CommandGroup(replacing: .help) {
+                Button("FramePull Documentation") {
+                    if let url = URL(string: "https://github.com/BurgoWhoppermann/FramePull/blob/main/docs/documentation.md") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .keyboardShortcut("?", modifiers: [.command])
+            }
         }
     }
 }

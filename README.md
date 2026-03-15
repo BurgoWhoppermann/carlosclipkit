@@ -70,6 +70,12 @@ Zero external dependencies. FramePull is built entirely on Apple frameworks:
 
 **Mac App Store** — *coming soon*
 
+## Documentation
+
+Full user documentation is available in [`docs/documentation.md`](docs/documentation.md).
+
+Topics covered: getting started, cut detection, manual and auto-generated markers, timeline interaction, LUT color grading, Preview & Reframe, export settings, keyboard shortcuts, and common workflows.
+
 ## Feedback
 
 FramePull is in active development. Bugs and feature requests welcome at [mail@carlooppermann.com](mailto:mail@carlooppermann.com).
