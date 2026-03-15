@@ -3,6 +3,10 @@ import UniformTypeIdentifiers
 import Combine
 import AVFoundation
 
+extension Notification.Name {
+    static let triggerExport = Notification.Name("FramePull.triggerExport")
+}
+
 enum OutputFormat: String, CaseIterable {
     case mp4 = "MP4"
 
@@ -151,6 +155,12 @@ struct FramePullApp: App {
         .defaultSize(width: 900, height: 800)
         .commands {
             CommandGroup(replacing: .newItem) { }
+            CommandGroup(replacing: .saveItem) {
+                Button("Export…") {
+                    NotificationCenter.default.post(name: .triggerExport, object: nil)
+                }
+                .keyboardShortcut("e", modifiers: [.command])
+            }
             CommandGroup(after: .appInfo) {
                 Button("What's New…") {
                     showSplash = true

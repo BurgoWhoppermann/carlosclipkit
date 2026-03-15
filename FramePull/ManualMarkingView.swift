@@ -107,7 +107,7 @@ struct ManualMarkingView: View {
                     Divider()
                 }
 
-                // Marked items list
+                // Marked items list — low priority so it compresses before the export button hides
                 ScrollView {
                     VStack(spacing: 16) {
                         stillsSection
@@ -115,6 +115,7 @@ struct ManualMarkingView: View {
                     }
                     .padding()
                 }
+                .layoutPriority(-1)
 
                 Divider()
 
@@ -153,6 +154,10 @@ struct ManualMarkingView: View {
                     videoPlayerHeight = maxPlayerHeight
                 }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .triggerExport)) { _ in
+            guard markingState.hasMarkedItems else { return }
+            showExportSheet = true
         }
         .onAppear {
             // Sync cached cuts from appState (if previously detected)
@@ -2292,236 +2297,333 @@ struct MarkerPreviewView: View {
     let markedClips: [MarkedClip]
 
     @Environment(\.dismiss) private var dismiss
-    @State private var thumbnails: [String: NSImage] = [:]      // Static thumbnails (stills + clip fallback)
-    @State private var clipGIFURLs: [String: URL] = [:]          // Temp GIF file URLs for animated clip previews
-    @State private var gifGenerationProgress: [String: Bool] = [:] // Tracks which clips are currently generating
+
+    // Pre-generated at 640 px — good for both the grid and lightbox, avoids per-navigation reloads
+    @State private var thumbnails: [String: NSImage] = [:]
+    @State private var clipGIFURLs: [String: URL] = [:]
+
+    // Loading gate — grid only appears after ALL previews are ready
+    @State private var isLoadingPreviews = true
+    @State private var loadingProgress: Double = 0
+
+    // Lightbox
+    @State private var lightboxIndex: Int? = nil
+    @State private var lightboxKeyMonitor: Any? = nil
 
     private let thumbWidth: CGFloat = 160
     private let thumbHeight: CGFloat = 90
     private let columns = [GridItem(.adaptive(minimum: 160, maximum: 180), spacing: 10)]
 
+    /// Flat ordered list: stills first, then clips. Indices used by the lightbox.
+    private var allItems: [(key: String, caption: String)] {
+        markedStills.map { ("still_\($0.id)", $0.formattedTime) } +
+        markedClips.map { ("clip_\($0.id)", "\($0.formattedInPoint) – \($0.formattedOutPoint)") }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Marker Preview")
-                    .font(.headline)
-                Spacer()
-                Button(action: { dismiss() }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.secondary)
+        ZStack {
+            VStack(alignment: .leading, spacing: 12) {
+                // Header — always visible
+                HStack {
+                    Text("Marker Preview").font(.headline)
+                    Spacer()
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-            }
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    // Stills
-                    if !markedStills.isEmpty {
-                        Text("STILLS (\(markedStills.count))")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(.orange)
-                        LazyVGrid(columns: columns, spacing: 10) {
-                            ForEach(markedStills) { still in
-                                VStack(spacing: 4) {
-                                    if let img = thumbnails["still_\(still.id)"] {
-                                        Image(nsImage: img)
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fill)
-                                            .frame(width: thumbWidth, height: thumbHeight)
-                                            .clipped()
-                                            .cornerRadius(6)
-                                    } else {
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .fill(Color.gray.opacity(0.15))
-                                            .frame(width: thumbWidth, height: thumbHeight)
-                                            .overlay(ProgressView().scaleEffect(0.6))
+                if isLoadingPreviews {
+                    // ── Loading screen ──────────────────────────────────────
+                    Spacer()
+                    VStack(spacing: 14) {
+                        ProgressView(value: loadingProgress)
+                            .progressViewStyle(.linear)
+                            .tint(.framePullBlue)
+                            .frame(maxWidth: 320)
+                        Text("Generating previews… \(Int(loadingProgress * 100))%")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    Spacer()
+                } else {
+                    // ── Thumbnail grid ──────────────────────────────────────
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            if !markedStills.isEmpty {
+                                Text("STILLS (\(markedStills.count))")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundColor(.orange)
+                                LazyVGrid(columns: columns, spacing: 10) {
+                                    ForEach(Array(markedStills.enumerated()), id: \.element.id) { i, still in
+                                        VStack(spacing: 4) {
+                                            if let img = thumbnails["still_\(still.id)"] {
+                                                Image(nsImage: img)
+                                                    .resizable()
+                                                    .aspectRatio(contentMode: .fill)
+                                                    .frame(width: thumbWidth, height: thumbHeight)
+                                                    .clipped()
+                                                    .cornerRadius(6)
+                                            } else {
+                                                RoundedRectangle(cornerRadius: 6)
+                                                    .fill(Color.gray.opacity(0.15))
+                                                    .frame(width: thumbWidth, height: thumbHeight)
+                                            }
+                                            Text(still.formattedTime)
+                                                .font(.system(size: 10, design: .monospaced))
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { lightboxIndex = i }
+                                        .help("Click to enlarge")
                                     }
-                                    Text(still.formattedTime)
-                                        .font(.system(size: 10, design: .monospaced))
-                                        .foregroundColor(.secondary)
                                 }
                             }
-                        }
-                    }
 
-                    // Clips
-                    if !markedClips.isEmpty {
-                        Text("CLIPS (\(markedClips.count))")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(.green)
-                        LazyVGrid(columns: columns, spacing: 10) {
-                            ForEach(markedClips) { clip in
-                                let clipKey = "clip_\(clip.id)"
-                                VStack(spacing: 4) {
-                                    ZStack(alignment: .center) {
-                                        if let gifURL = clipGIFURLs[clipKey] {
-                                            AnimatedGIFView(url: gifURL)
-                                                .frame(width: thumbWidth, height: thumbHeight)
-                                                .clipped()
-                                                .cornerRadius(6)
-                                        } else if let img = thumbnails[clipKey] {
-                                            Image(nsImage: img)
-                                                .resizable()
-                                                .aspectRatio(contentMode: .fill)
-                                                .frame(width: thumbWidth, height: thumbHeight)
-                                                .clipped()
-                                                .cornerRadius(6)
-                                        } else {
-                                            RoundedRectangle(cornerRadius: 6)
-                                                .fill(Color.gray.opacity(0.15))
-                                                .frame(width: thumbWidth, height: thumbHeight)
-                                                .overlay(ProgressView().scaleEffect(0.6))
-                                        }
-                                        // Duration badge
-                                        VStack {
-                                            Spacer()
-                                            HStack {
-                                                Spacer()
-                                                Text(clip.formattedDuration)
-                                                    .font(.system(size: 9, design: .monospaced))
-                                                    .foregroundColor(.white)
-                                                    .padding(.horizontal, 4)
-                                                    .padding(.vertical, 2)
-                                                    .background(.black.opacity(0.7))
-                                                    .cornerRadius(3)
-                                                    .padding(4)
-                                            }
-                                        }
-                                        .frame(width: thumbWidth, height: thumbHeight)
-                                        // Loading indicator for GIF generation
-                                        if gifGenerationProgress[clipKey] == true && clipGIFURLs[clipKey] == nil {
-                                            VStack {
-                                                HStack {
-                                                    ProgressView()
-                                                        .scaleEffect(0.5)
-                                                        .padding(4)
-                                                        .background(.black.opacity(0.6))
-                                                        .cornerRadius(4)
-                                                        .padding(4)
-                                                    Spacer()
+                            if !markedClips.isEmpty {
+                                Text("CLIPS (\(markedClips.count))")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundColor(.green)
+                                LazyVGrid(columns: columns, spacing: 10) {
+                                    ForEach(Array(markedClips.enumerated()), id: \.element.id) { j, clip in
+                                        let clipKey = "clip_\(clip.id)"
+                                        VStack(spacing: 4) {
+                                            ZStack(alignment: .center) {
+                                                if let gifURL = clipGIFURLs[clipKey] {
+                                                    AnimatedGIFView(url: gifURL)
+                                                        .frame(width: thumbWidth, height: thumbHeight)
+                                                        .clipped()
+                                                        .cornerRadius(6)
+                                                } else if let img = thumbnails[clipKey] {
+                                                    Image(nsImage: img)
+                                                        .resizable()
+                                                        .aspectRatio(contentMode: .fill)
+                                                        .frame(width: thumbWidth, height: thumbHeight)
+                                                        .clipped()
+                                                        .cornerRadius(6)
                                                 }
-                                                Spacer()
+                                                // Duration badge
+                                                VStack {
+                                                    Spacer()
+                                                    HStack {
+                                                        Spacer()
+                                                        Text(clip.formattedDuration)
+                                                            .font(.system(size: 9, design: .monospaced))
+                                                            .foregroundColor(.white)
+                                                            .padding(.horizontal, 4)
+                                                            .padding(.vertical, 2)
+                                                            .background(.black.opacity(0.7))
+                                                            .cornerRadius(3)
+                                                            .padding(4)
+                                                    }
+                                                }
+                                                .frame(width: thumbWidth, height: thumbHeight)
                                             }
-                                            .frame(width: thumbWidth, height: thumbHeight)
+                                            Text("\(clip.formattedInPoint) – \(clip.formattedOutPoint)")
+                                                .font(.system(size: 10, design: .monospaced))
+                                                .foregroundColor(.secondary)
                                         }
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { lightboxIndex = markedStills.count + j }
+                                        .help("Click to enlarge")
                                     }
-                                    Text("\(clip.formattedInPoint) - \(clip.formattedOutPoint)")
-                                        .font(.system(size: 10, design: .monospaced))
-                                        .foregroundColor(.secondary)
                                 }
                             }
                         }
+                        .padding(.bottom)
                     }
                 }
-                .padding(.bottom)
             }
-        }
-        .padding()
-        .frame(width: 560, height: 500)
-        .task {
-            await generateThumbnails()
-            await generateClipGIFs()
-        }
-        .onDisappear {
-            cleanupTempGIFs()
+            .padding()
+            .frame(width: 560, height: 500)
+            .task { await generateAllPreviews() }
+            .onDisappear {
+                cleanupTempGIFs()
+                if let m = lightboxKeyMonitor { NSEvent.removeMonitor(m); lightboxKeyMonitor = nil }
+            }
+            .onChange(of: lightboxIndex) { newIdx in
+                if newIdx != nil, lightboxKeyMonitor == nil {
+                    lightboxKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                        switch event.keyCode {
+                        case 123: if let i = self.lightboxIndex, i > 0 { self.lightboxIndex = i - 1 }; return nil
+                        case 124: if let i = self.lightboxIndex, i < self.allItems.count - 1 { self.lightboxIndex = i + 1 }; return nil
+                        case 53: self.lightboxIndex = nil; return nil
+                        default: return event
+                        }
+                    }
+                } else if newIdx == nil, let m = lightboxKeyMonitor {
+                    NSEvent.removeMonitor(m)
+                    lightboxKeyMonitor = nil
+                }
+            }
+
+            if lightboxIndex != nil { lightboxOverlay }
+
+        } // ZStack
+        .onExitCommand {
+            if lightboxIndex != nil { lightboxIndex = nil } else { dismiss() }
         }
     }
 
-    private func generateThumbnails() async {
+    // MARK: - Lightbox overlay
+
+    @ViewBuilder
+    private var lightboxOverlay: some View {
+        if let idx = lightboxIndex {
+            let items = allItems
+            ZStack {
+                Color.black.opacity(0.88).onTapGesture { lightboxIndex = nil }
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("\(idx + 1) of \(items.count)")
+                            .font(.caption).foregroundColor(.white.opacity(0.6))
+                        Spacer()
+                        Button { lightboxIndex = nil } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.title3).foregroundColor(.white.opacity(0.8))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 16).padding(.top, 16)
+
+                    HStack(spacing: 0) {
+                        Button { if idx > 0 { lightboxIndex = idx - 1 } } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.title2.weight(.semibold))
+                                .foregroundColor(idx > 0 ? .white : .white.opacity(0.15))
+                                .frame(width: 44)
+                        }
+                        .buttonStyle(.plain).disabled(idx == 0)
+
+                        // Image is always pre-loaded — no async work here
+                        Group {
+                            let isClip = idx >= markedStills.count
+                            let key = items[idx].key
+                            if isClip, let gifURL = clipGIFURLs[key] {
+                                AnimatedGIFView(url: gifURL)
+                                    .aspectRatio(contentMode: .fit).cornerRadius(8)
+                            } else if let img = thumbnails[key] {
+                                Image(nsImage: img).resizable()
+                                    .aspectRatio(contentMode: .fit).cornerRadius(8)
+                            } else {
+                                ProgressView()
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(.vertical, 12)
+
+                        Button { if idx < items.count - 1 { lightboxIndex = idx + 1 } } label: {
+                            Image(systemName: "chevron.right")
+                                .font(.title2.weight(.semibold))
+                                .foregroundColor(idx < items.count - 1 ? .white : .white.opacity(0.15))
+                                .frame(width: 44)
+                        }
+                        .buttonStyle(.plain).disabled(idx == items.count - 1)
+                    }
+                    .frame(maxHeight: .infinity)
+
+                    Text(items[idx].caption)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.7))
+                        .padding(.bottom, 16)
+                }
+            }
+        }
+    }
+
+    // MARK: - Preview generation
+
+    /// Generates all preview assets up front before showing the grid.
+    /// Progress weights: each thumbnail = 1 unit, each GIF ≈ 6 units (much slower).
+    private func generateAllPreviews() async {
+        let stills     = Array(markedStills.prefix(30))
+        let clipThumb  = Array(markedClips.prefix(30))
+        let clipGIF    = Array(markedClips.prefix(20))
+
+        let gifWeight  = 6.0
+        let total      = Double(stills.count + clipThumb.count) + Double(clipGIF.count) * gifWeight
+        var done       = 0.0
+
+        // ── 640-px thumbnails (used for both grid cells and lightbox) ──────
         let asset = AVURLAsset(url: videoURL)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 320, height: 320)
+        generator.maximumSize = CGSize(width: 640, height: 640)
 
-        for still in markedStills.prefix(30) {
-            let cmTime = CMTime(seconds: still.timestamp, preferredTimescale: 600)
-            if let cgImage = try? await generator.image(at: cmTime).image {
-                let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
-                await MainActor.run {
-                    thumbnails["still_\(still.id)"] = nsImage
-                }
+        for still in stills {
+            let t = CMTime(seconds: still.timestamp, preferredTimescale: 600)
+            if let cg = try? await generator.image(at: t).image {
+                let img = NSImage(cgImage: cg, size: .zero)
+                await MainActor.run { thumbnails["still_\(still.id)"] = img }
             }
+            done += 1
+            await MainActor.run { loadingProgress = done / max(1, total) }
+        }
+        for clip in clipThumb {
+            let t = CMTime(seconds: clip.inPoint, preferredTimescale: 600)
+            if let cg = try? await generator.image(at: t).image {
+                let img = NSImage(cgImage: cg, size: .zero)
+                await MainActor.run { thumbnails["clip_\(clip.id)"] = img }
+            }
+            done += 1
+            await MainActor.run { loadingProgress = done / max(1, total) }
         }
 
-        for clip in markedClips.prefix(30) {
-            let cmTime = CMTime(seconds: clip.inPoint, preferredTimescale: 600)
-            if let cgImage = try? await generator.image(at: cmTime).image {
-                let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
-                await MainActor.run {
-                    thumbnails["clip_\(clip.id)"] = nsImage
-                }
-            }
-        }
-    }
-
-    /// Renders small looping GIFs (320px, 25fps, max 15s) for each clip into a temp directory.
-    /// Static thumbnails show first, then get replaced with animated GIFs as they finish rendering.
-    private func generateClipGIFs() async {
-        let asset = AVURLAsset(url: videoURL)
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("FramePullPreviews", isDirectory: true)
+        // ── Animated GIFs (320 px, 25 fps, max 15 s) ──────────────────────
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FramePullPreviews", isDirectory: true)
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        for clip in markedClips.prefix(20) {
-            let clipKey = "clip_\(clip.id)"
-            await MainActor.run { gifGenerationProgress[clipKey] = true }
+        for clip in clipGIF {
+            let clipKey  = "clip_\(clip.id)"
+            let gifURL   = tempDir.appendingPathComponent("\(clip.id).gif")
+            let maxDur   = min(clip.duration, 15.0)
+            let fps      = 25
+            let frames   = max(1, Int(maxDur * Double(fps)))
+            let interval = maxDur / Double(frames)
+            let delay    = 1.0 / Double(fps)
 
-            let gifURL = tempDir.appendingPathComponent("\(clip.id).gif")
-            let maxDuration = min(clip.duration, 15.0) // cap at 15s for preview
-            let frameRate = 25
-            let frameCount = max(1, Int(maxDuration * Double(frameRate)))
-            let frameInterval = maxDuration / Double(frameCount)
-            let delayTime = 1.0 / Double(frameRate)
+            let gen = AVAssetImageGenerator(asset: asset)
+            gen.appliesPreferredTrackTransform = true
+            gen.maximumSize = CGSize(width: 320, height: 320)
+            gen.requestedTimeToleranceBefore = CMTime(seconds: 0.05, preferredTimescale: 600)
+            gen.requestedTimeToleranceAfter  = CMTime(seconds: 0.05, preferredTimescale: 600)
 
-            let imageGenerator = AVAssetImageGenerator(asset: asset)
-            imageGenerator.appliesPreferredTrackTransform = true
-            imageGenerator.maximumSize = CGSize(width: 320, height: 320)
-            imageGenerator.requestedTimeToleranceBefore = CMTime(seconds: 0.05, preferredTimescale: 600)
-            imageGenerator.requestedTimeToleranceAfter = CMTime(seconds: 0.05, preferredTimescale: 600)
+            guard let dest = CGImageDestinationCreateWithURL(
+                gifURL as CFURL, UTType.gif.identifier as CFString, frames, nil
+            ) else { done += gifWeight; await MainActor.run { loadingProgress = done / max(1, total) }; continue }
 
-            guard let destination = CGImageDestinationCreateWithURL(
-                gifURL as CFURL,
-                UTType.gif.identifier as CFString,
-                frameCount,
-                nil
-            ) else { continue }
+            CGImageDestinationSetProperties(dest, [
+                kCGImagePropertyGIFDictionary as String: [kCGImagePropertyGIFLoopCount as String: 0]
+            ] as CFDictionary)
 
-            let gifProperties: [String: Any] = [
-                kCGImagePropertyGIFDictionary as String: [
-                    kCGImagePropertyGIFLoopCount as String: 0
-                ]
-            ]
-            CGImageDestinationSetProperties(destination, gifProperties as CFDictionary)
-
-            let frameProperties: [String: Any] = [
-                kCGImagePropertyGIFDictionary as String: [
-                    kCGImagePropertyGIFDelayTime as String: delayTime
-                ],
+            let frameProp: [String: Any] = [
+                kCGImagePropertyGIFDictionary as String: [kCGImagePropertyGIFDelayTime as String: delay],
                 kCGImageDestinationLossyCompressionQuality as String: 0.5
             ]
 
-            var success = true
-            for frameIndex in 0..<frameCount {
-                let frameTime = clip.inPoint + (Double(frameIndex) * frameInterval)
-                let time = CMTime(seconds: frameTime, preferredTimescale: 600)
-                do {
-                    let (cgImage, _) = try await imageGenerator.image(at: time)
-                    CGImageDestinationAddImage(destination, cgImage, frameProperties as CFDictionary)
-                } catch {
-                    success = false
-                    break
-                }
+            var ok = true
+            for f in 0..<frames {
+                let t = CMTime(seconds: clip.inPoint + Double(f) * interval, preferredTimescale: 600)
+                guard let (cg, _) = try? await gen.image(at: t) else { ok = false; break }
+                CGImageDestinationAddImage(dest, cg, frameProp as CFDictionary)
             }
 
-            if success && CGImageDestinationFinalize(destination) {
-                await MainActor.run {
-                    clipGIFURLs[clipKey] = gifURL
-                }
+            if ok && CGImageDestinationFinalize(dest) {
+                await MainActor.run { clipGIFURLs[clipKey] = gifURL }
             }
+
+            done += gifWeight
+            await MainActor.run { loadingProgress = done / max(1, total) }
         }
+
+        await MainActor.run { loadingProgress = 1; isLoadingPreviews = false }
     }
 
     private func cleanupTempGIFs() {
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("FramePullPreviews", isDirectory: true)
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FramePullPreviews", isDirectory: true)
         try? FileManager.default.removeItem(at: tempDir)
     }
 }

@@ -467,9 +467,14 @@ class SceneDetector: @unchecked Sendable {
 
         guard !candidates.isEmpty else { return [] }
 
+        // Maximum non-overlapping windows of size windowSize across scenes.count scenes
+        // is floor(scenes.count / windowSize). Using candidates.count here is wrong because
+        // candidates includes all overlapping windows, making targetCount too high and
+        // causing the overlap-rejection loop to silently produce fewer clips than requested.
+        let maxNonOverlapping = scenes.count / max(1, windowSize)
         let targetCount = allowOverlapping
             ? count
-            : min(count, candidates.count)
+            : min(count, maxNonOverlapping)
 
         // Select clips spread evenly with random jitter for variety
         var selected: [(start: Double, duration: Double)] = []
