@@ -124,16 +124,55 @@ extension Color {
     static let framePullLightBlue = Color(red: 0.29, green: 0.56, blue: 0.85).opacity(0.1)
 }
 
+// MARK: - Window Management
+
+/// Keeps track of the main window so it can be reopened after close.
+final class WindowManager: NSObject, NSWindowDelegate {
+    static let shared = WindowManager()
+    private(set) var mainWindow: NSWindow?
+
+    func track(_ window: NSWindow) {
+        guard mainWindow == nil else { return }
+        mainWindow = window
+        window.delegate = self
+        window.isReleasedWhenClosed = false
+    }
+
+    func showMainWindow() {
+        guard let window = mainWindow else { return }
+        window.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+
+    // Hide window instead of closing — keeps it alive for reopening
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.orderOut(nil)
+        return false
+    }
+}
+
+/// Invisible view that captures the hosting NSWindow reference on appear.
+struct WindowAccessor: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { NSView() }
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            if let window = nsView.window {
+                WindowManager.shared.track(window)
+            }
+        }
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
-            sender.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(self)
+            WindowManager.shared.showMainWindow()
         }
         return true
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        application.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(self)
+        WindowManager.shared.showMainWindow()
     }
 }
 
@@ -167,6 +206,7 @@ struct FramePullApp: App {
                         }
                     )
                 }
+                .background(WindowAccessor())
                 .handlesExternalEvents(preferring: Set(["main"]), allowing: Set(["main"]))
         }
         .windowStyle(.hiddenTitleBar)
@@ -175,7 +215,7 @@ struct FramePullApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("Show FramePull Window") {
-                    NSApplication.shared.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
+                    WindowManager.shared.showMainWindow()
                 }
                 .keyboardShortcut("n", modifiers: [.command])
             }
