@@ -294,21 +294,46 @@ struct ExportSettingsView: View {
         }
     }
 
-    private var gifSizeEstimate: String {
-        let avgDuration = appState.markingState.markedClips.isEmpty
-            ? 5.0
-            : appState.markingState.markedClips.map { $0.duration }.reduce(0, +) / Double(appState.markingState.markedClips.count)
-        let bytes = appState.gifResolution.estimatedSize(
-            frameRate: appState.gifFrameRate,
-            clipDuration: avgDuration,
-            quality: appState.gifQuality
-        )
+    private func formatBytes(_ bytes: Int) -> String {
         let mb = Double(bytes) / 1_000_000.0
         if mb < 1.0 {
-            return "~\(Int(mb * 1000)) KB per clip"
+            return "~\(Int(mb * 1000)) KB"
         } else {
-            return "~\(String(format: "%.0f", mb)) MB per clip"
+            return "~\(String(format: "%.0f", mb)) MB"
         }
+    }
+
+    private var gifSizeEstimate: String {
+        let clips = appState.markingState.markedClips
+        let frameRate = appState.gifFrameRate
+        let quality = appState.gifQuality
+
+        if clips.isEmpty {
+            // No clips yet — show estimate for a hypothetical 5s clip
+            let bytes = appState.gifResolution.estimatedSize(
+                frameRate: frameRate, clipDuration: 5.0, quality: quality
+            )
+            return "\(formatBytes(bytes)) per clip (est. 5 s)"
+        }
+
+        let perClipBytes = clips.map {
+            appState.gifResolution.estimatedSize(
+                frameRate: frameRate, clipDuration: $0.duration, quality: quality
+            )
+        }
+        let totalBytes = perClipBytes.reduce(0, +)
+        let minBytes = perClipBytes.min()!
+        let maxBytes = perClipBytes.max()!
+
+        if clips.count == 1 {
+            return "\(formatBytes(totalBytes)) total (1 clip)"
+        }
+
+        if minBytes == maxBytes {
+            return "\(formatBytes(totalBytes)) total (\(clips.count) clips, \(formatBytes(minBytes)) each)"
+        }
+
+        return "\(formatBytes(totalBytes)) total (\(clips.count) clips, \(formatBytes(minBytes))–\(formatBytes(maxBytes)) each)"
     }
 
     private func chooseLocation() {

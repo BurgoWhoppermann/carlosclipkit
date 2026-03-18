@@ -38,12 +38,16 @@ enum GIFResolution: String, CaseIterable {
         }
     }
 
-    /// Estimate GIF file size in bytes for a given frame rate, clip duration, and quality
+    /// Estimate GIF file size in bytes for a given frame rate and clip duration.
+    /// GIF uses LZW on indexed color (256 max); for video-sourced content the
+    /// per-pixel cost after compression is ~0.6 bytes.  The `quality` parameter
+    /// controls colour-quantisation fidelity, not compression ratio, so it is
+    /// intentionally excluded from the size estimate.
     func estimatedSize(frameRate: Int, clipDuration: Double, quality: Double = 0.7) -> Int {
         let w = Double(maxWidth)
         let h = w * 9.0 / 16.0  // Assume 16:9 source
         let frameCount = Double(frameRate) * clipDuration
-        return Int(w * h * 0.3 * quality * frameCount)
+        return Int(w * h * 0.6 * frameCount)
     }
 }
 
