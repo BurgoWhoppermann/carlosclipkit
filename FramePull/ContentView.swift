@@ -37,6 +37,11 @@ struct ContentView: View {
     // MARK: - Drop Zone View
     private var dropZoneView: some View {
         VStack(spacing: 16) {
+            // Recent videos (top)
+            if !appState.recentVideos.isEmpty {
+                recentVideosSection
+            }
+
             Spacer()
 
             ZStack {
@@ -84,6 +89,72 @@ struct ContentView: View {
         }
     }
 
+    @State private var hoveredRecentURL: URL? = nil
+
+    // MARK: - Recent Videos
+    private var recentVideosSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.secondary)
+                Text("Recent")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.leading, 4)
+
+            HStack(spacing: 8) {
+                ForEach(appState.recentVideos, id: \.url) { entry in
+                    Button(action: {
+                        let accessed = entry.url.startAccessingSecurityScopedResource()
+                        appState.videoURL = entry.url
+                        appState.clearSceneCache()
+                        appState.addRecentVideo(entry.url)
+                        if accessed {
+                            entry.url.stopAccessingSecurityScopedResource()
+                        }
+                    }) {
+                        VStack(spacing: 6) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.framePullBlue.opacity(hoveredRecentURL == entry.url ? 0.15 : 0.07))
+                                Image(systemName: "film.fill")
+                                    .font(.system(size: 18))
+                                    .foregroundColor(.framePullBlue.opacity(0.6))
+                            }
+                            .frame(height: 44)
+
+                            Text(entry.name)
+                                .font(.system(size: 10))
+                                .foregroundColor(hoveredRecentURL == entry.url ? .framePullBlue : .secondary)
+                                .lineLimit(2)
+                                .truncationMode(.middle)
+                                .multilineTextAlignment(.center)
+                                .frame(height: 26)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(hoveredRecentURL == entry.url ? Color.secondary.opacity(0.08) : Color.clear)
+                        )
+                        .scaleEffect(hoveredRecentURL == entry.url ? 1.04 : 1.0)
+                        .animation(.easeInOut(duration: 0.15), value: hoveredRecentURL)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hovering in
+                        hoveredRecentURL = hovering ? entry.url : nil
+                    }
+                }
+            }
+        }
+        .padding(.horizontal)
+        .padding(.top, 8)
+    }
+
     // MARK: - Version Footer
     private var versionFooter: some View {
         HStack {
@@ -110,6 +181,7 @@ struct ContentView: View {
         if panel.runModal() == .OK, let url = panel.url {
             appState.videoURL = url
             appState.clearSceneCache()
+            appState.addRecentVideo(url)
         }
     }
 
@@ -131,6 +203,7 @@ struct ContentView: View {
                 DispatchQueue.main.async {
                     appState.videoURL = url
                     appState.clearSceneCache()
+                    appState.addRecentVideo(url)
                 }
             }
         }

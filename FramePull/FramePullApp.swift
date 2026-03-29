@@ -247,6 +247,44 @@ class AppState: ObservableObject {
     @Published var markingState = MarkingState()
     private var markingStateCancellable: AnyCancellable?
 
+    // MARK: - Recent Videos (last 5, persisted as security-scoped bookmarks)
+    private static let recentVideosKey = "recentVideoBookmarks"
+    private static let maxRecentVideos = 5
+
+    @Published var recentVideos: [(url: URL, name: String)] = []
+
+    func loadRecentVideos() {
+        guard let bookmarks = UserDefaults.standard.array(forKey: Self.recentVideosKey) as? [Data] else { return }
+        var result: [(url: URL, name: String)] = []
+        for bookmark in bookmarks {
+            var isStale = false
+            if let url = try? URL(resolvingBookmarkData: bookmark, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale),
+               !isStale, FileManager.default.fileExists(atPath: url.path) {
+                result.append((url: url, name: url.lastPathComponent))
+            }
+        }
+        recentVideos = result
+    }
+
+    func addRecentVideo(_ url: URL) {
+        guard let bookmark = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) else { return }
+        var bookmarks = (UserDefaults.standard.array(forKey: Self.recentVideosKey) as? [Data]) ?? []
+        // Remove existing entry for same file (by resolving each bookmark)
+        bookmarks.removeAll { data in
+            var stale = false
+            if let existing = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &stale) {
+                return existing.path == url.path
+            }
+            return false
+        }
+        bookmarks.insert(bookmark, at: 0)
+        if bookmarks.count > Self.maxRecentVideos {
+            bookmarks = Array(bookmarks.prefix(Self.maxRecentVideos))
+        }
+        UserDefaults.standard.set(bookmarks, forKey: Self.recentVideosKey)
+        loadRecentVideos()
+    }
+
     // Independent export type toggles
     @Published var exportStillsEnabled: Bool = true
     @Published var exportMovingClipsEnabled: Bool = true
@@ -499,6 +537,7 @@ class AppState: ObservableObject {
 
         restoreLUTSettings()
         restoreOutputFolder()
+        loadRecentVideos()
     }
 
     /// Cancel any in-progress scene detection task
