@@ -6,148 +6,154 @@ struct SplashView: View {
     let build: String
     let onDismiss: () -> Void
 
+    @State private var dontShowAgain = UserDefaults.standard.bool(forKey: "splashDontShowAgain")
+
     var body: some View {
-        VStack(spacing: 0) {
-            // Close button
-            HStack {
-                Spacer()
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark")
-                        .font(.caption.weight(.medium))
-                        .foregroundColor(.secondary)
-                        .frame(width: 20, height: 20)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 10)
-                .padding(.trailing, 10)
-            }
+        ZStack {
+            // Gradient background
+            LinearGradient(
+                colors: [.framePullNavy, Color(red: 0.06, green: 0.18, blue: 0.38)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
 
-            // Header
-            VStack(spacing: 8) {
-                if let icon = NSApplication.shared.applicationIconImage {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .frame(width: 72, height: 72)
-                }
-
-                Text("FramePull")
-                    .font(.title.weight(.bold))
-
-                Text("v\(version)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            .padding(.top, 0)
-            .padding(.bottom, 24)
-
-            // Watch tutorial button
-            Button(action: {
-                TutorialWindowController.shared.showTutorial()
-            }) {
-                HStack(spacing: 8) {
-                    Image(systemName: "play.circle.fill")
-                        .font(.title2)
-                    Text("Watch Quick Start Video")
-                        .font(.body.weight(.medium))
-                }
-                .foregroundColor(.framePullBlue)
-                .padding(.vertical, 10)
-                .padding(.horizontal, 20)
-                .background(Color.framePullBlue.opacity(0.1))
-                .cornerRadius(8)
-            }
-            .buttonStyle(.plain)
-            .padding(.bottom, 8)
-
-            // YouTube link
-            Button(action: {
-                if let url = URL(string: "https://youtube.com/shorts/0gg_b9Xx1Xs") {
-                    NSWorkspace.shared.open(url)
-                }
-            }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "play.rectangle.fill")
-                        .font(.callout)
-                    Text("Watch on YouTube")
-                        .font(.callout)
-                }
-                .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
-            .padding(.bottom, 16)
-
-            // What's New
-            VStack(alignment: .leading, spacing: 6) {
-                Text("What's New")
-                    .font(.caption.weight(.bold))
-                    .foregroundColor(.framePullBlue)
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "magnet").font(.caption2).foregroundColor(.secondary).frame(width: 14)
-                    Text("Snap toggle on timeline — snap in/out points and drag edges to playhead or scene cuts")
-                        .font(.caption2).foregroundColor(.secondary)
-                }
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "eye").font(.caption2).foregroundColor(.secondary).frame(width: 14)
-                    Text("Preview in export — animated clip previews and still thumbnails before exporting")
-                        .font(.caption2).foregroundColor(.secondary)
-                }
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "cube").font(.caption2).foregroundColor(.secondary).frame(width: 14)
-                    Text("Added LUT Support")
-                        .font(.caption2).foregroundColor(.secondary)
-                }
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "square.3.layers.3d").font(.caption2).foregroundColor(.secondary).frame(width: 14)
-                    Text("Multi-lane timeline for overlapping clips, loop buttons on clip bars")
-                        .font(.caption2).foregroundColor(.secondary)
-                }
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "speaker.wave.2").font(.caption2).foregroundColor(.secondary).frame(width: 14)
-                    Text("Volume control, keyboard shortcuts work everywhere, auto-resize preview")
-                        .font(.caption2).foregroundColor(.secondary)
-                }
-            }
-            .padding(.horizontal, 28)
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Spacer()
-
-            // Build info + feedback
-            VStack(spacing: 4) {
-                Text("In development — please contact us with bugs and feature requests")
-                    .font(.caption)
-                    .foregroundColor(.secondary.opacity(0.7))
-                    .multilineTextAlignment(.center)
-
-                Button(action: {
-                    if let url = URL(string: "mailto:mail@carlooppermann.com?subject=FramePull%20Feedback") {
-                        NSWorkspace.shared.open(url)
+            VStack(spacing: 0) {
+                // Close button
+                HStack {
+                    Spacer()
+                    Button(action: onDismiss) {
+                        Image(systemName: "xmark")
+                            .font(.caption.weight(.medium))
+                            .foregroundColor(.white.opacity(0.5))
+                            .frame(width: 20, height: 20)
+                            .contentShape(Rectangle())
                     }
-                }) {
-                    Text("mail@carlooppermann.com")
-                        .font(.caption)
-                        .foregroundColor(.framePullBlue.opacity(0.8))
+                    .buttonStyle(.plain)
+                    .padding(.top, 10)
+                    .padding(.trailing, 10)
                 }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 28)
-            .padding(.bottom, 8)
 
-            Divider()
+                // Header
+                VStack(spacing: 6) {
+                    if let icon = NSApplication.shared.applicationIconImage {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .frame(width: 56, height: 56)
+                    }
+
+                    Text("FramePull")
+                        .font(.title2.weight(.bold))
+                        .foregroundColor(.white)
+
+                    Text("v\(version)")
+                        .font(.caption)
+                        .foregroundColor(.framePullSilver.opacity(0.7))
+                }
+                .padding(.bottom, 20)
+
+                // Workflow cards 2×2
+                VStack(spacing: 12) {
+                    HStack(spacing: 12) {
+                        WorkflowCard(
+                            step: 1,
+                            title: "Mark Manually",
+                            subtitle: "Set stills & clip points on the timeline",
+                            icon: "hand.tap",
+                            color: .framePullAmber
+                        )
+                        WorkflowCard(
+                            step: 2,
+                            title: "Detect Cuts",
+                            subtitle: "Find scene boundaries automatically",
+                            icon: "scissors",
+                            color: .framePullBlue
+                        )
+                    }
+                    HStack(spacing: 12) {
+                        WorkflowCard(
+                            step: 3,
+                            title: "Auto-Generate",
+                            subtitle: "Place stills & clips from detected scenes",
+                            icon: "wand.and.stars",
+                            color: .framePullAmber
+                        )
+                        WorkflowCard(
+                            step: 4,
+                            title: "Export",
+                            subtitle: "Save stills, GIFs & video clips",
+                            icon: "square.and.arrow.up",
+                            color: .framePullBlue
+                        )
+                    }
+                }
                 .padding(.horizontal, 24)
 
-            // Dismiss button
-            Button(action: onDismiss) {
-                Text("Get Started")
-                    .frame(maxWidth: .infinity)
+                Spacer()
+
+                // Bottom section
+                VStack(spacing: 10) {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.15))
+                        .frame(height: 0.5)
+                        .padding(.horizontal, 24)
+
+                    // Feedback hint
+                    HStack(spacing: 4) {
+                        Text("Feature requests & feedback:")
+                            .font(.caption)
+                            .foregroundColor(.framePullSilver.opacity(0.6))
+                        Button(action: {
+                            if let url = URL(string: "mailto:mail@carlooppermann.com?subject=FramePull%20Feedback") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }) {
+                            Text("mail@carlooppermann.com")
+                                .font(.caption)
+                                .foregroundColor(.framePullBlue)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    // Watch tutorial
+                    Button(action: {
+                        TutorialWindowController.shared.showTutorial()
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "play.circle.fill")
+                                .font(.callout)
+                            Text("Watch Quick Start Video")
+                                .font(.callout.weight(.medium))
+                        }
+                        .foregroundColor(.framePullAmber)
+                    }
+                    .buttonStyle(.plain)
+
+                    // Don't show again
+                    Toggle(isOn: $dontShowAgain) {
+                        Text("Don't show on launch")
+                            .font(.caption)
+                            .foregroundColor(.framePullSilver.opacity(0.5))
+                    }
+                    .toggleStyle(.checkbox)
+                    .onChange(of: dontShowAgain) { newValue in
+                        UserDefaults.standard.set(newValue, forKey: "splashDontShowAgain")
+                    }
+
+                    // Get Started
+                    Button(action: onDismiss) {
+                        Text("Get Started")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.framePullAmber)
+                    .controlSize(.large)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 16)
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.framePullBlue)
-            .controlSize(.large)
-            .padding(20)
         }
-        .frame(width: 380, height: 500)
+        .frame(width: 480, height: 620)
         .background(KeyDismissHandler(onDismiss: onDismiss))
     }
 
@@ -173,6 +179,58 @@ struct SplashView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Workflow Card
+
+private struct WorkflowCard: View {
+    let step: Int
+    let title: String
+    let subtitle: String
+    let icon: String
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Placeholder image area
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(color.opacity(0.12))
+                    .frame(height: 80)
+                    .overlay(
+                        Image(systemName: icon)
+                            .font(.title)
+                            .foregroundColor(color.opacity(0.5))
+                    )
+
+                // Step badge
+                Text("\(step)")
+                    .font(.caption2.weight(.bold))
+                    .foregroundColor(.white)
+                    .frame(width: 20, height: 20)
+                    .background(Circle().fill(color))
+                    .offset(x: 6, y: 6)
+            }
+
+            Text(title)
+                .font(.callout.weight(.semibold))
+                .foregroundColor(.white)
+
+            Text(subtitle)
+                .font(.caption2)
+                .foregroundColor(.framePullSilver)
+                .lineLimit(2)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Color.white.opacity(0.1), lineWidth: 0.5)
+        )
     }
 }
 

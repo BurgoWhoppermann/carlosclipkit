@@ -180,7 +180,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 struct FramePullApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appState = AppState()
-    @State private var showSplash = true  // Always show on launch
+    @State private var showSplash = !UserDefaults.standard.bool(forKey: "splashDontShowAgain")
 
     private var currentBuild: String {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
