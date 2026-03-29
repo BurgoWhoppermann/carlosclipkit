@@ -108,7 +108,7 @@ struct ManualMarkingView: View {
                     Divider()
                 }
 
-                // Marked items list — low priority so it compresses before the export button hides
+                // Marked items list — shrinks first so export bar always stays visible
                 ScrollView(showsIndicators: true) {
                     VStack(spacing: 16) {
                         if appState.exportStillsEnabled {
@@ -122,10 +122,11 @@ struct ManualMarkingView: View {
                 }
                 .scrollIndicators(.visible)
                 .layoutPriority(-1)
+                .frame(minHeight: 0)
 
                 Divider()
 
-                // Bottom: Export button + shortcuts button
+                // Bottom: Export button + shortcuts button (always visible)
                 HStack {
                     Button("Export Settings...") {
                         showExportSheet = true
@@ -150,6 +151,7 @@ struct ManualMarkingView: View {
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 6)
+                .layoutPriority(1)
             }
             .onChange(of: geometry.size.height) { newHeight in
                 let maxPlayerHeight = max(120, newHeight - fixedChromeHeight)
