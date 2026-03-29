@@ -59,14 +59,14 @@ struct SplashView: View {
                             step: 1,
                             title: "Mark Manually",
                             subtitle: "Set stills & clip points on the timeline",
-                            icon: "hand.tap",
+                            imageName: "tutorial_manual",
                             color: .framePullAmber
                         )
                         WorkflowCard(
                             step: 2,
                             title: "Detect Cuts",
                             subtitle: "Find scene boundaries automatically",
-                            icon: "scissors",
+                            imageName: "tutorial_cuts",
                             color: .framePullBlue
                         )
                     }
@@ -75,14 +75,14 @@ struct SplashView: View {
                             step: 3,
                             title: "Auto-Generate",
                             subtitle: "Place stills & clips from detected scenes",
-                            icon: "wand.and.stars",
+                            imageName: "tutorial_autogen",
                             color: .framePullAmber
                         )
                         WorkflowCard(
                             step: 4,
                             title: "Export",
                             subtitle: "Save stills, GIFs & video clips",
-                            icon: "square.and.arrow.up",
+                            imageName: "tutorial_export",
                             color: .framePullBlue
                         )
                     }
@@ -188,21 +188,18 @@ private struct WorkflowCard: View {
     let step: Int
     let title: String
     let subtitle: String
-    let icon: String
+    let imageName: String
     let color: Color
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Placeholder image area
+            // Tutorial screenshot
             ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(color.opacity(0.12))
+                Image(imageName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
                     .frame(height: 80)
-                    .overlay(
-                        Image(systemName: icon)
-                            .font(.title)
-                            .foregroundColor(color.opacity(0.5))
-                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
 
                 // Step badge
                 Text("\(step)")

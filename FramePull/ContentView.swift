@@ -18,10 +18,9 @@ struct ContentView: View {
                 ManualMarkingView(videoURL: videoURL)
             } else {
                 dropZoneView
+                // Version footer (only on drop zone)
+                versionFooter
             }
-
-            // Version footer (always visible)
-            versionFooter
         }
         .padding()
         .alert("Error", isPresented: $showError) {
@@ -107,13 +106,10 @@ struct ContentView: View {
             HStack(spacing: 8) {
                 ForEach(appState.recentVideos, id: \.url) { entry in
                     Button(action: {
-                        let accessed = entry.url.startAccessingSecurityScopedResource()
+                        _ = entry.url.startAccessingSecurityScopedResource()
                         appState.videoURL = entry.url
                         appState.clearSceneCache()
                         appState.addRecentVideo(entry.url)
-                        if accessed {
-                            entry.url.stopAccessingSecurityScopedResource()
-                        }
                     }) {
                         VStack(spacing: 6) {
                             ZStack {

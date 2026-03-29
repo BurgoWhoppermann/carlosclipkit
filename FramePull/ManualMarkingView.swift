@@ -126,8 +126,12 @@ struct ManualMarkingView: View {
 
                 Divider()
 
-                // Bottom: Export button + shortcuts button (always visible)
-                HStack {
+                // Bottom: Version + Export button + shortcuts button (always visible)
+                HStack(spacing: 8) {
+                    Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"))")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary.opacity(0.6))
+
                     Button("Export Settings...") {
                         showExportSheet = true
                     }
@@ -222,6 +226,10 @@ struct ManualMarkingView: View {
                         if let still = ms.markedStills.first(where: { abs($0.timestamp - time) < tolerance }) {
                             ms.removeStill(id: still.id)
                         } else if let clip = ms.markedClips.first(where: { abs($0.inPoint - time) < tolerance }) {
+                            if self.loopingClipId == clip.id {
+                                pc.clearLoopRange()
+                                self.loopingClipId = nil
+                            }
                             ms.removeClip(id: clip.id)
                         } else if let clip = ms.markedClips.first(where: { abs($0.outPoint - time) < tolerance }) {
                             ms.removeClipOutPoint(id: clip.id)
@@ -885,6 +893,10 @@ struct ManualMarkingView: View {
                     markingState.removeStill(id: id)
                 },
                 onClipRemoved: { id in
+                    if loopingClipId == id {
+                        playerController.clearLoopRange()
+                        loopingClipId = nil
+                    }
                     markingState.removeClip(id: id)
                 },
                 onClipRangeChanged: { id, newIn, newOut in
@@ -1271,7 +1283,13 @@ struct ManualMarkingView: View {
                         .foregroundColor(loopingClipId == clip.id ? .orange : .framePullBlue)
                         .help(loopingClipId == clip.id ? "Stop looping" : "Play clip in loop")
 
-                        Button(action: { markingState.removeClip(id: clip.id) }) {
+                        Button(action: {
+                            if loopingClipId == clip.id {
+                                playerController.clearLoopRange()
+                                loopingClipId = nil
+                            }
+                            markingState.removeClip(id: clip.id)
+                        }) {
                             Image(systemName: "xmark.circle")
                         }
                         .buttonStyle(.plain)
@@ -1283,6 +1301,10 @@ struct ManualMarkingView: View {
                     .background(Color(NSColor.controlBackgroundColor))
                     .cornerRadius(6)
                     .onTapGesture(count: 2) {
+                        if loopingClipId == clip.id {
+                            playerController.clearLoopRange()
+                            loopingClipId = nil
+                        }
                         markingState.removeClip(id: clip.id)
                     }
                 }
@@ -1510,6 +1532,10 @@ struct ManualMarkingView: View {
             case .still(let id):
                 markingState.removeStill(id: id)
             case .clipInPoint(let id):
+                if loopingClipId == id {
+                    playerController.clearLoopRange()
+                    loopingClipId = nil
+                }
                 markingState.removeClip(id: id)
             case .clipOutPoint(let id):
                 markingState.removeClipOutPoint(id: id)

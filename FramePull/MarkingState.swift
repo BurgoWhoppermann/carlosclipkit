@@ -220,7 +220,7 @@ class MarkingState: ObservableObject {
             return time
         }
         guard abs(nearest - time) <= threshold else { return time }
-        let safetyMargin = 0.042  // ~1 frame at 24fps
+        let safetyMargin = 2.0 * frameDuration  // 2 frames to reliably avoid the cut frame
         return forOutPoint ? nearest - safetyMargin : nearest + safetyMargin
     }
 
