@@ -316,6 +316,7 @@ struct ManualMarkingView: View {
         }
         .alert("Cut Detection Required", isPresented: $showFaceDetectionAlert) {
             Button("Detect Cuts") {
+                showCutDetectionPopover = true
                 detectScenes()
             }
             Button("Cancel", role: .cancel) { }
@@ -325,6 +326,7 @@ struct ManualMarkingView: View {
         .alert("Cut Detection Recommended", isPresented: $showCutDetectionHint) {
             Button("Detect Cuts") {
                 showCutDetectionPopover = true
+                detectScenes()
             }
             Button("Skip", role: .cancel) {
                 withAnimation(.easeInOut(duration: 0.2)) { showAnalysisDialog = true }
