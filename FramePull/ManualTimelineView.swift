@@ -330,12 +330,9 @@ struct ManualTimelineView: View {
                                 NSCursor.pop()
                             }
                         }
-                        .simultaneousGesture(
-                            TapGesture(count: 2)
-                                .onEnded {
-                                    onStillRemoved(still.id)
-                                }
-                        )
+                        .onTapGesture(count: 2) {
+                            onStillRemoved(still.id)
+                        }
                         .contextMenu {
                             Button(role: .destructive) { onStillRemoved(still.id) } label: {
                                 Label("Delete Still", systemImage: "trash")
@@ -344,7 +341,7 @@ struct ManualTimelineView: View {
                             Text("Double-click to delete").foregroundColor(.secondary)
                         }
                         .highPriorityGesture(
-                            DragGesture(minimumDistance: 1, coordinateSpace: .named("timeline"))
+                            DragGesture(minimumDistance: 4, coordinateSpace: .named("timeline"))
                                 .onChanged { value in
                                     if draggingStillId != still.id {
                                         dragStartScrollOffset = scrollOffset

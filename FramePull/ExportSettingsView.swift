@@ -90,175 +90,193 @@ struct ExportSettingsView: View {
 
             Divider()
 
+            // Constants for crisp visual alignment across sections
+            let groupIndent: CGFloat = 24
+            let subLabelWidth: CGFloat = 85
+            let mainLabelWidth: CGFloat = groupIndent + subLabelWidth
+
             // Stills settings
             if displayStillCount > 0 {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 10) {
                     Toggle("Export stills", isOn: $appState.exportStillsEnabled)
                         .toggleStyle(.checkbox)
+                        .font(.system(size: 13, weight: .semibold))
                         .help("Include still frames in the export")
 
                     if appState.exportStillsEnabled {
-                        HStack {
-                            Text("Format:")
-                            Spacer()
-                            Picker("", selection: $appState.stillFormat) {
-                                ForEach(StillFormat.allCases, id: \.self) { format in
-                                    Text(format.rawValue).tag(format)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Format:")
+                                    .frame(width: subLabelWidth, alignment: .leading)
+                                Picker("", selection: $appState.stillFormat) {
+                                    ForEach(StillFormat.allCases, id: \.self) { format in
+                                        Text(format.rawValue).tag(format)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                .frame(width: 180)
+                                .help("Choose image format — JPEG for smaller files, PNG for lossless, TIFF for maximum quality")
+                            }
+
+                            HStack {
+                                Text("Still size:")
+                                    .frame(width: subLabelWidth, alignment: .leading)
+                                Picker("", selection: $appState.stillSize) {
+                                    ForEach(StillSize.allCases, id: \.self) { size in
+                                        Text(size.rawValue).tag(size)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                .frame(width: 140)
+                                .help("Scale factor for exported stills — 1x is full resolution")
+                                
+                                if appState.videoSize != .zero {
+                                    let w = Int(appState.videoSize.width * appState.stillSize.scale)
+                                    let h = Int(appState.videoSize.height * appState.stillSize.scale)
+                                    Text("\(w) x \(h)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .padding(.leading, 4)
                                 }
                             }
-                            .pickerStyle(.segmented)
-                            .frame(width: 200)
-                            .help("Choose image format — JPEG for smaller files, PNG for lossless, TIFF for maximum quality")
                         }
-                        .padding(.leading, 20)
-
-                        HStack {
-                            Text("Still size:")
-                            Spacer()
-                            Picker("", selection: $appState.stillSize) {
-                                ForEach(StillSize.allCases, id: \.self) { size in
-                                    Text(size.rawValue).tag(size)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .frame(width: 140)
-                            .help("Scale factor for exported stills — 1x is full resolution")
-                            if appState.videoSize != .zero {
-                                let w = Int(appState.videoSize.width * appState.stillSize.scale)
-                                let h = Int(appState.videoSize.height * appState.stillSize.scale)
-                                Text("\(w) x \(h)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        .padding(.leading, 20)
-
+                        .padding(.leading, groupIndent)
                     }
                 }
             }
 
             if displayStillCount > 0 && displayClipCount > 0 {
-                Divider()
+                Divider().padding(.vertical, 4)
             }
 
             // Clip export settings (only when clips exist)
             if displayClipCount > 0 {
                 // GIF subsection
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 10) {
                     Toggle("Export GIFs", isOn: $appState.exportGIF)
                         .toggleStyle(.checkbox)
+                        .font(.system(size: 13, weight: .semibold))
                         .help("Export each clip as an animated GIF")
 
                     if appState.exportGIF {
-                        HStack {
-                            Text("Resolution:")
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Picker("", selection: $appState.gifResolution) {
-                                ForEach(GIFResolution.allCases, id: \.self) { resolution in
-                                    Text(resolution.displayName).tag(resolution)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Resolution:")
+                                    .frame(width: subLabelWidth, alignment: .leading)
+                                Picker("", selection: $appState.gifResolution) {
+                                    ForEach(GIFResolution.allCases, id: \.self) { resolution in
+                                        Text(resolution.displayName).tag(resolution)
+                                    }
                                 }
+                                .pickerStyle(.menu)
+                                .frame(width: 160)
+                                .help("Maximum width of the exported GIF in pixels")
                             }
-                            .pickerStyle(.menu)
-                            .frame(width: 180)
-                            .help("Maximum width of the exported GIF in pixels")
-                        }
-                        .padding(.leading, 20)
 
-                        HStack {
-                            Text("Frame rate:")
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Picker("", selection: $appState.gifFrameRate) {
-                                Text("10 fps").tag(10)
-                                Text("15 fps").tag(15)
-                                Text("20 fps").tag(20)
-                                Text("25 fps").tag(25)
-                                Text("30 fps").tag(30)
+                            HStack {
+                                Text("Frame rate:")
+                                    .frame(width: subLabelWidth, alignment: .leading)
+                                Picker("", selection: $appState.gifFrameRate) {
+                                    Text("10 fps").tag(10)
+                                    Text("15 fps").tag(15)
+                                    Text("20 fps").tag(20)
+                                    Text("25 fps").tag(25)
+                                    Text("30 fps").tag(30)
+                                }
+                                .pickerStyle(.menu)
+                                .frame(width: 100)
+                                .help("Frames per second — higher is smoother but larger file size")
                             }
-                            .pickerStyle(.menu)
-                            .frame(width: 100)
-                            .help("Frames per second — higher is smoother but larger file size")
-                        }
-                        .padding(.leading, 20)
 
-                        HStack {
-                            Text("Quality:")
-                                .foregroundColor(.secondary)
-                            Slider(value: $appState.gifQuality, in: 0.3...1.0, step: 0.1)
-                                .tint(.framePullBlue)
-                                .help("Color quality — lower values reduce file size")
-                            Text("\(Int(appState.gifQuality * 100))%")
+                            HStack {
+                                Text("Quality:")
+                                    .frame(width: subLabelWidth, alignment: .leading)
+                                Slider(value: $appState.gifQuality, in: 0.3...1.0, step: 0.1)
+                                    .frame(width: 160)
+                                    .tint(.framePullBlue)
+                                    .help("Color quality — lower values reduce file size")
+                                Text("\(Int(appState.gifQuality * 100))%")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 35, alignment: .trailing)
+                            }
+                            
+                            Text(gifSizeEstimate)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                                .frame(width: 35, alignment: .trailing)
+                                .padding(.top, 2)
                         }
-                        .padding(.leading, 20)
-
-                        Text(gifSizeEstimate)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .padding(.leading, 20)
+                        .padding(.leading, groupIndent)
                     }
                 }
 
-                Divider()
+                Divider().padding(.vertical, 4)
 
                 // MP4 subsection
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 10) {
                     Toggle("Export video clips", isOn: $appState.exportMP4)
                         .toggleStyle(.checkbox)
+                        .font(.system(size: 13, weight: .semibold))
                         .help("Export each clip as an MP4 video file")
 
                     if appState.exportMP4 {
-                        HStack {
-                            Text("Quality:")
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Picker("", selection: $appState.clipQuality) {
-                                ForEach(ClipQuality.allCases, id: \.self) { quality in
-                                    Text(quality.displayName).tag(quality)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Quality:")
+                                    .frame(width: subLabelWidth, alignment: .leading)
+                                Picker("", selection: $appState.clipQuality) {
+                                    ForEach(ClipQuality.allCases, id: \.self) { quality in
+                                        Text(quality.displayName).tag(quality)
+                                    }
                                 }
+                                .pickerStyle(.menu)
+                                .frame(width: 160)
+                                .help("Video export resolution — higher quality means larger files")
                             }
-                            .pickerStyle(.menu)
-                            .frame(width: 180)
-                            .help("Video export resolution — higher quality means larger files")
-                        }
-                        .padding(.leading, 20)
 
-                        Toggle("Mute audio", isOn: $appState.muteAudio)
-                            .toggleStyle(.checkbox)
-                            .padding(.leading, 20)
-                            .help("Strip audio track from exported clips")
+                            Toggle("Mute audio track", isOn: $appState.muteAudio)
+                                .toggleStyle(.checkbox)
+                                .help("Strip audio track from exported clips")
+                                .padding(.leading, subLabelWidth + 4) // Align checkbox exactly with Picker text
+                        }
+                        .padding(.leading, groupIndent)
                     }
                 }
 
-                Divider()
+                Divider().padding(.vertical, 4)
 
                 // Crop options
-                HStack {
+                HStack(spacing: 8) {
                     Text("Additional crops:")
-                    Spacer()
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: mainLabelWidth, alignment: .leading)
+                    
                     Toggle("4:5", isOn: $appState.export4x5)
                         .toggleStyle(.checkbox)
                         .help("Also export a 4:5 vertical crop (Instagram portrait)")
+                        
                     Toggle("9:16", isOn: $appState.export9x16)
                         .toggleStyle(.checkbox)
+                        .padding(.leading, 8)
                         .help("Also export a 9:16 vertical crop (Stories / Reels / TikTok)")
                 }
             }
 
-            Divider()
+            Divider().padding(.vertical, 4)
 
             // Save location
-            HStack {
+            HStack(spacing: 8) {
                 Text("Save to:")
-                Spacer()
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: mainLabelWidth, alignment: .leading)
+                
                 if let saveURL = appState.saveURL {
                     Text(saveURL.lastPathComponent)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.primary)
+                        .font(.system(size: 13, weight: .medium))
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading) // Push "Choose" to the right edge
                 } else {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -266,7 +284,9 @@ struct ExportSettingsView: View {
                         Text("Select output folder")
                             .foregroundColor(.orange)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                
                 Button("Choose...") {
                     chooseLocation()
                 }
@@ -284,12 +304,16 @@ struct ExportSettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+                .padding(.top, 8)
             }
 
+            Spacer().frame(height: 8)
+
             // Action buttons
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 Button(action: { showPreviewSelect = true }) {
                     Label("Preview & Select", systemImage: "checklist")
+                        .font(.headline)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -300,6 +324,7 @@ struct ExportSettingsView: View {
 
                 Button(action: { startExport() }) {
                     Text("Export")
+                        .font(.headline)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -308,10 +333,12 @@ struct ExportSettingsView: View {
                 .disabled(appState.saveURL == nil || isExporting || !appState.hasSelectedExportType)
                 .help("Export all marked stills and clips to the selected folder")
             }
+            .padding(.top, 4)
 
-            Label("Files are always added — never overwritten", systemImage: "plus.circle")
-                .font(.caption)
+            Text("Files are always added — never overwritten")
+                .font(.system(size: 11))
                 .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
         }
         .padding()
         .frame(width: 400)

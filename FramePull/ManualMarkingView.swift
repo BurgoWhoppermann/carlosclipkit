@@ -223,14 +223,12 @@ struct ManualMarkingView: View {
             let pc = playerController
             let app = appState
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
-                // Don't intercept keys when a sheet, overlay, or popup is open
-                if self.showExportSheet || self.showShortcuts || self.showOnboarding || self.showAutoDetectPrompt {
+                // Don't intercept keys when a sheet, overlay, popup, or alert is open
+                if self.showExportSheet || self.showShortcuts || self.showOnboarding || self.showAutoDetectPrompt ||
+                   self.showExportComplete || self.showError || self.showFaceDetectionAlert || self.showCutDetectionHint {
                     return event
                 }
-                // Don't intercept when a sheet is attached to the window (e.g. Preview & Select)
-                if NSApp.mainWindow?.sheets.isEmpty == false {
-                    return event
-                }
+                
                 // When a text field has focus, only intercept marking keys (s/i/o/space/esc/delete)
                 if let responder = event.window?.firstResponder, responder is NSTextView {
                     let chars = event.charactersIgnoringModifiers?.lowercased() ?? ""
@@ -245,12 +243,15 @@ struct ManualMarkingView: View {
                 switch chars {
                 case "s":
                     ms.addStill(at: pc.currentTime, isManual: true)
+                    app.exportStillsEnabled = true
                     return nil
                 case "i":
                     ms.setInPoint(at: pc.currentTime, snapEnabled: app.snapToSceneCuts)
+                    app.exportMovingClipsEnabled = true
                     return nil
                 case "o":
                     ms.setOutPoint(at: pc.currentTime, snapEnabled: app.snapToSceneCuts, isManual: true)
+                    app.exportMovingClipsEnabled = true
                     return nil
                 case " ":
                     pc.togglePlayPause()
@@ -260,8 +261,6 @@ struct ManualMarkingView: View {
                     return nil
                 default:
                     if event.keyCode == 53 { // Escape
-                        // Let ESC through when a sheet is attached (e.g. keyboard cheat sheet)
-                        if NSApp.mainWindow?.sheets.isEmpty == false { return event }
                         ms.cancelPendingInPoint()
                         return nil
                     } else if event.keyCode == 51 || event.keyCode == 117 { // Backspace / Forward Delete
@@ -1643,14 +1642,17 @@ struct ManualMarkingView: View {
         switch key {
         case .still:
             markingState.addStill(at: playerController.currentTime, isManual: true)
+            appState.exportStillsEnabled = true
             flashKey("S")
 
         case .inPoint:
             markingState.setInPoint(at: playerController.currentTime, snapEnabled: appState.snapToSceneCuts)
+            appState.exportMovingClipsEnabled = true
             flashKey("I")
 
         case .outPoint:
             markingState.setOutPoint(at: playerController.currentTime, snapEnabled: appState.snapToSceneCuts, isManual: true)
+            appState.exportMovingClipsEnabled = true
             flashKey("O")
 
         case .playPause:

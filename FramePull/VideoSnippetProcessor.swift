@@ -558,6 +558,9 @@ class VideoSnippetProcessor {
             return CMTime(seconds: frameTime, preferredTimescale: 600)
         }
 
+        var lastValidImage: CGImage? = nil
+        var addedFrames = 0
+
         for await result in imageGenerator.images(for: frameTimes) {
             switch result {
             case .success(_, let cgImage, _):
@@ -581,10 +584,35 @@ class VideoSnippetProcessor {
                         }
                     }
                 }
+                
+                lastValidImage = outputImage
                 CGImageDestinationAddImage(destination, outputImage, frameProperties as CFDictionary)
-            case .failure(let time, _):
-                print("Failed to generate GIF frame at \(CMTimeGetSeconds(time))")
+                addedFrames += 1
+                
+            case .failure(let time, let error):
+                print("Failed to generate GIF frame at \(CMTimeGetSeconds(time)): \(error.localizedDescription)")
+                if let fallback = lastValidImage {
+                    CGImageDestinationAddImage(destination, fallback, frameProperties as CFDictionary)
+                    addedFrames += 1
+                }
             }
+        }
+        
+        // Ensure we strictly meet the promised frameCount (failures can leave us short)
+        while addedFrames < frameCount {
+            if let fallback = lastValidImage {
+                CGImageDestinationAddImage(destination, fallback, frameProperties as CFDictionary)
+            } else {
+                // If even the very first frame failed, create a dummy black frame to prevent crash
+                if let ctx = CGContext(data: nil, width: maxWidth, height: maxWidth, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+                    ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+                    ctx.fill(CGRect(x: 0, y: 0, width: maxWidth, height: maxWidth))
+                    if let fallback = ctx.makeImage() {
+                        CGImageDestinationAddImage(destination, fallback, frameProperties as CFDictionary)
+                    }
+                }
+            }
+            addedFrames += 1
         }
 
         guard CGImageDestinationFinalize(destination) else {

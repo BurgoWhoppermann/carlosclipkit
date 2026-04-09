@@ -370,16 +370,29 @@ class LoopingPlayerController: ObservableObject {
         }
         isSeeking = true
         let cmTime = CMTime(seconds: time, preferredTimescale: 600)
-        let tolerance = CMTime(seconds: 0.05, preferredTimescale: 600)
+        
+        // Use positiveInfinity for lighting fast keyframe scrubbing
+        let tolerance = CMTime.positiveInfinity
+        
+        // Optimizes networking/buffering during rapid seeks
+        player.currentItem?.preferredForwardBufferDuration = 1.0
+        
         player.seek(to: cmTime, toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] _ in
             guard let self else { return }
+            
             if let pending = self.pendingSeek {
                 self.pendingSeek = nil
                 self.isSeeking = false
                 self.scrub(to: pending)
             } else {
-                self.isSeeking = false
-                self.isScrubbing = false
+                // When pending is exhausted (cursor stopped), do one final exact seek
+                let exactTime = CMTime(seconds: self.currentTime, preferredTimescale: 600)
+                self.player.seek(to: exactTime, toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+                    // Restore default forward buffering
+                    self.player.currentItem?.preferredForwardBufferDuration = 0 // 0 means default
+                    self.isSeeking = false
+                    self.isScrubbing = false
+                }
             }
         }
     }
