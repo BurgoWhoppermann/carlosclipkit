@@ -109,21 +109,25 @@ struct LUTProcessor {
 
     // MARK: - Apply LUT to CGImage
 
+    /// Shared CIContext — reused across calls to avoid the cost of acquiring
+    /// a Metal device handle on every invocation.
+    private static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+
     /// Apply a parsed LUT to a CGImage using CIColorCubeWithColorSpace.
     /// Returns the color-corrected CGImage, or nil if the filter fails.
     static func applyLUT(to cgImage: CGImage, cubeDimension: Int, cubeData: Data) -> CGImage? {
         let ciImage = CIImage(cgImage: cgImage)
 
-        guard let filter = CIFilter(name: "CIColorCubeWithColorSpace") else { return nil }
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let filter = CIFilter(name: "CIColorCubeWithColorSpace") else { return nil }
         filter.setValue(cubeDimension, forKey: "inputCubeDimension")
         filter.setValue(cubeData, forKey: "inputCubeData")
-        filter.setValue(CGColorSpace(name: CGColorSpace.sRGB)!, forKey: "inputColorSpace")
+        filter.setValue(colorSpace, forKey: "inputColorSpace")
         filter.setValue(ciImage, forKey: kCIInputImageKey)
 
         guard let outputImage = filter.outputImage else { return nil }
 
-        let context = CIContext(options: [.useSoftwareRenderer: false])
-        return context.createCGImage(outputImage, from: ciImage.extent)
+        return ciContext.createCGImage(outputImage, from: ciImage.extent)
     }
 
     // MARK: - Directory Scanner
