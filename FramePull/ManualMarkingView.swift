@@ -269,11 +269,7 @@ struct ManualMarkingView: View {
                         if let still = ms.markedStills.first(where: { abs($0.timestamp - time) < tolerance }) {
                             ms.removeStill(id: still.id)
                         } else if let clip = ms.markedClips.first(where: { abs($0.inPoint - time) < tolerance }) {
-                            if self.loopingClipId == clip.id {
-                                pc.clearLoopRange()
-                                self.loopingClipId = nil
-                            }
-                            ms.removeClip(id: clip.id)
+                            self.removeClipAndStopLoop(clip.id)
                         } else if let clip = ms.markedClips.first(where: { abs($0.outPoint - time) < tolerance }) {
                             ms.removeClipOutPoint(id: clip.id)
                         }
@@ -996,11 +992,7 @@ struct ManualMarkingView: View {
                     markingState.removeStill(id: id)
                 },
                 onClipRemoved: { id in
-                    if loopingClipId == id {
-                        playerController.clearLoopRange()
-                        loopingClipId = nil
-                    }
-                    markingState.removeClip(id: id)
+                    removeClipAndStopLoop(id)
                 },
                 onClipRangeChanged: { id, newIn, newOut in
                     markingState.updateClipRange(id: id, inPoint: newIn, outPoint: newOut, snapEnabled: appState.snapToSceneCuts)
@@ -1419,11 +1411,7 @@ struct ManualMarkingView: View {
                         .help(loopingClipId == clip.id ? "Stop looping" : "Play clip in loop")
 
                         Button(action: {
-                            if loopingClipId == clip.id {
-                                playerController.clearLoopRange()
-                                loopingClipId = nil
-                            }
-                            markingState.removeClip(id: clip.id)
+                            removeClipAndStopLoop(clip.id)
                         }) {
                             Image(systemName: "xmark.circle")
                         }
@@ -1445,11 +1433,7 @@ struct ManualMarkingView: View {
                     )
                     .cornerRadius(6)
                     .onTapGesture(count: 2) {
-                        if loopingClipId == clip.id {
-                            playerController.clearLoopRange()
-                            loopingClipId = nil
-                        }
-                        markingState.removeClip(id: clip.id)
+                        removeClipAndStopLoop(clip.id)
                     }
                 }
             }
@@ -1676,11 +1660,7 @@ struct ManualMarkingView: View {
             case .still(let id):
                 markingState.removeStill(id: id)
             case .clipInPoint(let id):
-                if loopingClipId == id {
-                    playerController.clearLoopRange()
-                    loopingClipId = nil
-                }
-                markingState.removeClip(id: id)
+                removeClipAndStopLoop(id)
             case .clipOutPoint(let id):
                 markingState.removeClipOutPoint(id: id)
             case nil:
@@ -2043,5 +2023,15 @@ struct ManualMarkingView: View {
         }
     }
 
-}
+    // MARK: - Helpers
 
+    /// Remove a clip and stop looping if the removed clip was actively looping.
+    private func removeClipAndStopLoop(_ id: UUID) {
+        if loopingClipId == id {
+            playerController.clearLoopRange()
+            loopingClipId = nil
+        }
+        markingState.removeClip(id: id)
+    }
+
+}
