@@ -353,9 +353,6 @@ class AppState: ObservableObject {
     @Published var detectionThreshold: Double = 0.35
     var sceneDetectionTask: Task<Void, Never>?
 
-    // UI hint: settings changed, re-analyze needed
-    @Published var needsReanalysis: Bool = false
-
     // Still positions (auto-calculated, read-only in auto mode)
     @Published var stillPositions: [Double] = []
     @Published var videoDuration: Double = 0
@@ -564,20 +561,10 @@ class AppState: ObservableObject {
         return false
     }
 
-    // Get count of selected export types for progress tracking
-    var selectedExportCount: Int {
-        var count = 0
-        if exportStillsEnabled { count += 1 }
-        if exportGIFs { count += 1 }
-        if exportClips { count += 1 }
-        return count
-    }
-
     func clearSceneCache() {
         cancelSceneDetection()
         detectedScenes = []
         scenesDetected = false
-        needsReanalysis = false
         resetStillPositions()
         markingState.detectedCuts = []
     }
