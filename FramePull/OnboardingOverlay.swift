@@ -657,19 +657,26 @@ struct OnboardingOverlayView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(.top, 12)
-        } else if let rect = currentRect {
-            // Steps 1-4: spotlight cutout
-            SpotlightShape(cutout: rect)
-                .fill(style: FillStyle(eoFill: true))
-                .foregroundColor(Color.black.opacity(0.55))
-                .animation(.easeInOut(duration: 0.35), value: currentStep)
-                .onTapGesture { dismissGuide() }
+        } else {
+            // Steps 1-4: spotlight cutout locally or fallback
+            let rect = currentRect ?? CGRect(x: geo.size.width / 2, y: geo.size.height / 2, width: 0, height: 0)
+            
+            if currentRect != nil {
+                SpotlightShape(cutout: rect)
+                    .fill(style: FillStyle(eoFill: true))
+                    .foregroundColor(Color.black.opacity(0.55))
+                    .animation(.easeInOut(duration: 0.35), value: currentStep)
+                    .onTapGesture { dismissGuide() }
 
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.framePullAmber.opacity(0.5), lineWidth: 1.5)
-                .frame(width: rect.width + 16, height: rect.height + 16)
-                .position(x: rect.midX, y: rect.midY)
-                .animation(.easeInOut(duration: 0.35), value: currentStep)
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.framePullAmber.opacity(0.5), lineWidth: 1.5)
+                    .frame(width: rect.width + 16, height: rect.height + 16)
+                    .position(x: rect.midX, y: rect.midY)
+                    .animation(.easeInOut(duration: 0.35), value: currentStep)
+            } else {
+                Color.black.opacity(0.55)
+                    .onTapGesture { dismissGuide() }
+            }
 
             OnboardingTooltipCard(
                 step: currentID,
@@ -678,7 +685,11 @@ struct OnboardingOverlayView: View {
                 cutoutRect: rect,
                 containerSize: geo.size,
                 dontShowAgain: $dontShowAgain,
-                onBack: { withAnimation(.easeInOut(duration: 0.3)) { currentStep -= 1 } },
+                onBack: {
+                    if currentStep > 0 {
+                        withAnimation(.easeInOut(duration: 0.3)) { currentStep -= 1 }
+                    }
+                },
                 onNext: {
                     if currentStep < steps.count - 1 {
                         withAnimation(.easeInOut(duration: 0.3)) { currentStep += 1 }

@@ -36,7 +36,7 @@ struct ManualTimelineView: View {
     @State private var hoveredClipBarId: UUID? = nil
 
     // Zoom state
-    @State private var zoomLevel: Double = 1.0
+    @Binding var zoomLevel: Double
 
     // Scroll offset frozen at drag-start so the view doesn't shift under the user's cursor
     @State private var dragStartScrollOffset: CGFloat = 0
@@ -415,20 +415,10 @@ struct ManualTimelineView: View {
                     }
             )
 
-            // Zoom controls + scroll indicator
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
-
-                Slider(value: $zoomLevel, in: 1...20)
-                    .controlSize(.mini)
-                    .frame(width: 80)
-
-                scrollIndicator(viewportWidth: viewportWidth, contentWidth: width, scrollOffset: scrollOffset)
-            }
-            .frame(height: 16)
-            .padding(.horizontal, 4)
+            // Scroll indicator
+            scrollIndicator(viewportWidth: viewportWidth, contentWidth: width, scrollOffset: scrollOffset)
+                .frame(height: 16)
+                .padding(.horizontal, 4)
             } // VStack
         }
         .frame(height: totalHeight)

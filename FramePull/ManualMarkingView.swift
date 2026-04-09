@@ -76,7 +76,7 @@ struct ManualMarkingView: View {
     @State private var showAutoDetectPrompt = false
     @State private var previewingItemId: UUID? = nil
     @State private var previewDismissTask: Task<Void, Never>? = nil
-
+    @State private var timelineZoomLevel: Double = 1.0
     private let sceneDetector = SceneDetector()
     private let videoProcessor = VideoProcessor()
 
@@ -142,9 +142,6 @@ struct ManualMarkingView: View {
     private var mainContent: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                // Marker hint bar
-                markerHintBar
-
                 // Video Player
                 videoPlayerSection
 
@@ -161,13 +158,6 @@ struct ManualMarkingView: View {
                 // Everything below the controls bar scrolls together
                 ScrollView(showsIndicators: true) {
                     VStack(spacing: 0) {
-                        // Inline generate markers panel
-                        if showAnalysisDialog {
-                            inlineGeneratePanel
-                                .transition(.move(edge: .top).combined(with: .opacity))
-                            Divider()
-                        }
-
                         VStack(spacing: 16) {
                             if appState.exportStillsEnabled {
                                 stillsSection
@@ -244,14 +234,17 @@ struct ManualMarkingView: View {
                 case "s":
                     ms.addStill(at: pc.currentTime, isManual: true)
                     app.exportStillsEnabled = true
+                    self.flashKey("S")
                     return nil
                 case "i":
                     ms.setInPoint(at: pc.currentTime, snapEnabled: app.snapToSceneCuts)
                     app.exportMovingClipsEnabled = true
+                    self.flashKey("I")
                     return nil
                 case "o":
                     ms.setOutPoint(at: pc.currentTime, snapEnabled: app.snapToSceneCuts, isManual: true)
                     app.exportMovingClipsEnabled = true
+                    self.flashKey("O")
                     return nil
                 case " ":
                     pc.togglePlayPause()
@@ -567,57 +560,22 @@ struct ManualMarkingView: View {
                 // Overlay: cut detection top-left, filename top-right, playback controls bottom
                 VStack {
                     HStack(alignment: .top) {
-                        // Cut detection popover button
-                        Button(action: { showCutDetectionPopover.toggle() }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: cutDetectionIconName)
-                                    .font(.system(size: 16, weight: .semibold))
-                                Text(cutDetectionLabelText)
-                                    .font(.subheadline.weight(.semibold))
-                                    .lineLimit(1)
-                            }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(cutDetectionButtonBackground)
-                            .cornerRadius(8)
-                            .scaleEffect(isCutDetectionHovered ? 1.05 : 1.0)
-                            .animation(.easeInOut(duration: 0.15), value: isCutDetectionHovered)
-                        }
-                        .buttonStyle(.plain)
-                        .onHover { hovering in
-                            isCutDetectionHovered = hovering
-                        }
-                        .help("Cut detection & snapping settings")
-                        .onboardingHighlight(.detectCuts)
-                        .popover(isPresented: $showCutDetectionPopover, arrowEdge: .bottom) {
-                            cutDetectionPopoverContent
-                        }
-                        .padding(8)
-
                         Spacer()
 
-                        HStack(spacing: 6) {
-                            Text(videoURL.lastPathComponent)
-                                .font(.caption2)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Button(action: {
-                                appState.videoURL = nil
-                                appState.clearSceneCache()
-                            }) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 14))
-                            }
-                            .buttonStyle(.plain)
-                            .help("Remove video")
+                        Button(action: {
+                            appState.videoURL = nil
+                            appState.clearSceneCache()
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 16))
+                                .foregroundColor(.white)
+                                .padding(8)
+                                .background(Color.black.opacity(0.4))
+                                .clipShape(Circle())
                         }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(.black.opacity(0.6))
-                        .cornerRadius(6)
-                        .padding(6)
+                        .buttonStyle(.plain)
+                        .help("Remove video")
+                        .padding(8)
                     }
 
                     Spacer()
@@ -693,6 +651,25 @@ struct ManualMarkingView: View {
                                 .transition(.opacity)
                             }
                         }
+
+                        // Playback Speed Menu / Buttons inline
+                        HStack(spacing: 4) {
+                            ForEach(MarkingState.PlaybackSpeed.allCases, id: \.self) { speed in
+                                Button(speed.displayName) {
+                                    markingState.playbackSpeed = speed
+                                    playerController.setRate(Float(speed.rawValue))
+                                }
+                                .buttonStyle(.plain)
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(markingState.playbackSpeed == speed ? .black : .white)
+                                .frame(minWidth: 28, minHeight: 20)
+                                .padding(.horizontal, 3)
+                                .background(markingState.playbackSpeed == speed ? Color.white : Color.black.opacity(0.45))
+                                .cornerRadius(4)
+                                .help("Playback speed \(speed.displayName)")
+                            }
+                        }
+                        .padding(.leading, 4)
 
                         Spacer()
 
@@ -886,63 +863,106 @@ struct ManualMarkingView: View {
 
     private var controlsBar: some View {
         VStack(spacing: 8) {
-            // Speed controls, legend, and indicators — all in one row
+            // Unified toolbar: S I O | Auto-Generate | Undo | Cuts | Snap | LUT | Zoom
             HStack(spacing: 8) {
-                // Speed buttons
+                // Keycaps
                 HStack(spacing: 4) {
-                    ForEach(MarkingState.PlaybackSpeed.allCases, id: \.self) { speed in
-                        Button(speed.displayName) {
-                            markingState.playbackSpeed = speed
-                            playerController.setRate(Float(speed.rawValue))
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(markingState.playbackSpeed == speed ? .framePullBlue : .secondary)
-                        .controlSize(.small)
-                        .help("Playback speed \(speed.displayName)")
+                    Button(action: { handleKeyPress(.still) }) {
+                        keyCap("S", glowColor: .orange)
                     }
+                    .buttonStyle(.plain)
+                    .help("Snap Still (S)")
+
+                    Button(action: { handleKeyPress(.inPoint) }) {
+                        keyCap("I", glowColor: markingState.pendingInPoint != nil ? .orange : .green)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Mark IN point (I)")
+
+                    Button(action: { handleKeyPress(.outPoint) }) {
+                        keyCap("O", glowColor: .green)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(markingState.pendingInPoint == nil)
+                    .help("Mark OUT point (O)")
+                }
+                .onboardingHighlight(.manualControls)
+
+                Divider().frame(height: 16)
+
+                // Auto-generate triggers popover
+                Button(action: {
+                    if showAnalysisDialog {
+                        withAnimation(.easeInOut(duration: 0.2)) { showAnalysisDialog = false }
+                    } else if !appState.scenesDetected {
+                        showCutDetectionHint = true
+                    } else {
+                        withAnimation(.easeInOut(duration: 0.2)) { showAnalysisDialog = true }
+                        if !hasGenerated {
+                            generateMarkersFromSettings()
+                            hasGenerated = true
+                        }
+                    }
+                }) {
+                    Label("Auto-Generate", systemImage: "sparkles")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.framePullAmber)
+                .controlSize(.small)
+                .help("Open auto-generation panel to create markers from scene analysis")
+                .onboardingHighlight(.autoGenerate)
+                .popover(isPresented: $showAnalysisDialog, arrowEdge: .top) {
+                    inlineGeneratePanel
+                        .frame(width: 450)
+                        .padding()
                 }
 
-                // Color legend (inline) — shows auto vs manual marker types
-                HStack(spacing: 8) {
-                    if !markingState.detectedCuts.isEmpty {
-                        legendItem(color: .secondary.opacity(0.5), label: "Cuts")
+                if markingState.hasMarkedItems {
+                    Button(action: { markingState.clearAll() }) {
+                        Image(systemName: "trash")
                     }
-                    let hasAutoStills = markingState.markedStills.contains { !$0.isManual }
-                    let hasManualStills = markingState.markedStills.contains { $0.isManual }
-                    if hasAutoStills {
-                        legendItem(color: .orange, label: "Auto")
-                    }
-                    if hasManualStills {
-                        legendItem(color: .framePullBlue, label: "Manual")
-                    }
-                    let hasAutoClips = markingState.markedClips.contains { !$0.isManual }
-                    let hasManualClips = markingState.markedClips.contains { $0.isManual }
-                    if hasAutoClips || (markingState.pendingInPoint != nil && !hasManualClips) {
-                        legendItem(color: .green, label: "Clips")
-                    }
-                    if hasManualClips || (markingState.pendingInPoint != nil && hasManualClips) {
-                        legendItem(color: .framePullBlue, label: "M.Clips")
-                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                    .controlSize(.small)
+                    .help("Clear All Stills & Clips")
                 }
-                .font(.caption2)
-                .foregroundColor(.secondary)
+
+                if appState.canAppUndo {
+                    Button(action: { appState.appUndo() }) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Undo (Cmd+Z)")
+                }
 
                 Spacer()
 
-                // Detection indicators
-                if isDetectingScenes {
-                    ProgressView()
-                        .scaleEffect(0.6)
-                    Text("Detecting cuts...")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                } else if markingState.detectedCutsCount > 0 {
-                    Image(systemName: "scissors")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text("\(markingState.detectedCutsCount) cuts")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                // Cut detection popover button
+                Button(action: { showCutDetectionPopover.toggle() }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: cutDetectionIconName)
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(cutDetectionLabelText)
+                            .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundColor(isCutDetectionHovered ? .primary : .secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.secondary.opacity(0.1))
+                    .cornerRadius(6)
+                    .scaleEffect(isCutDetectionHovered ? 1.02 : 1.0)
+                    .animation(.easeInOut(duration: 0.15), value: isCutDetectionHovered)
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    isCutDetectionHovered = hovering
+                }
+                .help("Cut detection settings")
+                .onboardingHighlight(.detectCuts)
+                .popover(isPresented: $showCutDetectionPopover, arrowEdge: .top) {
+                    cutDetectionPopoverContent
                 }
 
                 Toggle(isOn: $appState.snapToSceneCuts) {
@@ -956,24 +976,15 @@ struct ManualMarkingView: View {
                 // LUT selector menu
                 lutMenuButton
 
-                if faceStillsCount > 0 && appState.stillPlacement == .preferFaces {
-                    Image(systemName: "face.smiling")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text("\(faceStillsCount) faces")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+                Divider().frame(height: 16)
 
-                // Undo button — uses unified app undo stack
-                if appState.canAppUndo {
-                    Button(action: { appState.appUndo() }) {
-                        Image(systemName: "arrow.uturn.backward")
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Undo (Cmd+Z)")
-                }
+                // Zoom Slider
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+                Slider(value: $timelineZoomLevel, in: 1...20)
+                    .controlSize(.mini)
+                    .frame(width: 80)
             }
 
             // Timeline with markers
@@ -1009,7 +1020,8 @@ struct ManualMarkingView: View {
                 loopingClipId: loopingClipId,
                 selectedStillId: selectedStillId,
                 activeMarker: activeMarker,
-                snapEnabled: appState.snapToSceneCuts
+                snapEnabled: appState.snapToSceneCuts,
+                zoomLevel: $timelineZoomLevel
             )
         }
         .padding(.horizontal)
@@ -1029,20 +1041,28 @@ struct ManualMarkingView: View {
     private func keyCap(_ key: String, glowColor: Color) -> some View {
         let isActive = lastPressedKey == key
         return Text(key)
-            .font(.system(.callout, design: .monospaced).weight(.semibold))
-            .foregroundColor(isActive ? .white : .secondary)
-            .frame(width: 30, height: 26)
+            .font(.system(.subheadline, design: .monospaced).weight(.bold))
+            .foregroundColor(isActive ? .black : .white)
+            .frame(width: 28, height: 26)
             .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(isActive ? glowColor : Color.secondary.opacity(0.12))
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isActive ? glowColor : Color.white.opacity(0.15))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(isActive ? glowColor.opacity(0.8) : Color.secondary.opacity(0.3), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(Color.white.opacity(isActive ? 0.8 : 0.3), lineWidth: 1)
             )
-            .shadow(color: isActive ? glowColor.opacity(0.7) : .clear, radius: 6)
+            .overlay(
+                // Inner top bevel for a "keycap" 3D feel
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(Color.white.opacity(isActive ? 0.0 : 0.4), lineWidth: 1)
+                    .offset(y: -1)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            )
+            .shadow(color: isActive ? glowColor.opacity(0.8) : .black.opacity(0.3), radius: isActive ? 8 : 2, y: isActive ? 0 : 2)
+            .scaleEffect(isActive ? 0.92 : 1.0)
+            .animation(.spring(response: 0.15, dampingFraction: 0.6), value: isActive)
             .contentShape(Rectangle())
-            .animation(.easeOut(duration: 0.15), value: isActive)
     }
 
     // MARK: - Inline Generate Panel
