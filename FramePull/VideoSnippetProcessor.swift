@@ -544,9 +544,15 @@ class VideoSnippetProcessor {
         let frameProperties: [String: Any] = [
             kCGImagePropertyGIFDictionary as String: [
                 kCGImagePropertyGIFDelayTime as String: delayTime
-            ],
-            kCGImageDestinationLossyCompressionQuality as String: quality
+            ]
         ]
+
+        // Quality controls color reduction: at 1.0 full 256 colors, at 0.3 ~32 colors
+        // We posterize via CIFilter to reduce unique colors → better LZW compression → smaller file
+        let ciContext = CIContext(options: [.workingColorSpace: NSNull()])
+        // Map quality 0.3…1.0 → posterize levels 8…256  (fewer levels = fewer unique colors)
+        let posterizeLevels = max(8, Int(round(quality * 256.0)))
+        let shouldPosterize = posterizeLevels < 200 // Skip when near full quality
 
         for frameIndex in 0..<frameCount {
             let frameTime = startTime + (Double(frameIndex) * frameInterval)
@@ -559,6 +565,20 @@ class VideoSnippetProcessor {
                 // Apply LUT color correction if active
                 if let dim = lutCubeDimension, let data = lutCubeData {
                     outputImage = LUTProcessor.applyLUT(to: outputImage, cubeDimension: dim, cubeData: data) ?? outputImage
+                }
+                // Apply color reduction for lower quality settings
+                if shouldPosterize {
+                    let ciImage = CIImage(cgImage: outputImage)
+                    if let filter = CIFilter(name: "CIColorPosterize") {
+                        filter.setValue(ciImage, forKey: kCIInputImageKey)
+                        // CIColorPosterize levels: 2…256 per channel
+                        let levels = max(2.0, round(Double(posterizeLevels) / 16.0))
+                        filter.setValue(NSNumber(value: levels), forKey: "inputLevels")
+                        if let result = filter.outputImage,
+                           let posterized = ciContext.createCGImage(result, from: result.extent) {
+                            outputImage = posterized
+                        }
+                    }
                 }
                 CGImageDestinationAddImage(destination, outputImage, frameProperties as CFDictionary)
             } catch {

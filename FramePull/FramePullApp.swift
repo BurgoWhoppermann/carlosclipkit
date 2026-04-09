@@ -38,16 +38,17 @@ enum GIFResolution: String, CaseIterable {
         }
     }
 
-    /// Estimate GIF file size in bytes for a given frame rate and clip duration.
+    /// Estimate GIF file size in bytes for a given frame rate, clip duration, and quality.
     /// GIF uses LZW on indexed color (256 max); for video-sourced content the
-    /// per-pixel cost after compression is ~0.6 bytes.  The `quality` parameter
-    /// controls colour-quantisation fidelity, not compression ratio, so it is
-    /// intentionally excluded from the size estimate.
+    /// per-pixel cost after compression is ~0.6 bytes at full quality.
+    /// Lower quality posterizes colors → fewer unique values → better LZW compression.
     func estimatedSize(frameRate: Int, clipDuration: Double, quality: Double = 0.7) -> Int {
         let w = Double(maxWidth)
         let h = w * 9.0 / 16.0  // Assume 16:9 source
         let frameCount = Double(frameRate) * clipDuration
-        return Int(w * h * 0.6 * frameCount)
+        // Quality 1.0 → factor 1.0 (full size), quality 0.3 → factor ~0.35
+        let compressionFactor = 0.2 + 0.8 * quality
+        return Int(w * h * 0.6 * frameCount * compressionFactor)
     }
 }
 
@@ -291,12 +292,12 @@ class AppState: ObservableObject {
     }
 
     // Independent export type toggles
-    @Published var exportStillsEnabled: Bool = true
+    @Published var exportStillsEnabled: Bool = false
     @Published var exportMovingClipsEnabled: Bool = true
 
     // Format toggles for Clips (user can select any combination)
-    @Published var exportGIF: Bool = true
-    @Published var exportMP4: Bool = true
+    @Published var exportGIF: Bool = false
+    @Published var exportMP4: Bool = false
     // Computed convenience properties
     var exportStills: Bool { exportStillsEnabled }
     var exportGIFs: Bool { exportMovingClipsEnabled && exportGIF }
@@ -696,10 +697,10 @@ class AppState: ObservableObject {
 
     /// Reset all settings to defaults
     func resetAll() {
-        exportStillsEnabled = true
+        exportStillsEnabled = false
         exportMovingClipsEnabled = true
-        exportGIF = true
-        exportMP4 = true
+        exportGIF = false
+        exportMP4 = false
         stillCount = 10
         stillFormat = .jpeg
         stillSize = .full

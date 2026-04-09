@@ -73,6 +73,8 @@ struct ManualMarkingView: View {
     @State private var showOnboarding = false
     @State private var forceGuidedOnboarding = false
     @State private var onboardingHighlights: [OnboardingHighlightID: CGRect] = [:]
+    @State private var showAutoDetectPrompt = false
+    @State private var previewingItemId: UUID? = nil
 
     private let sceneDetector = SceneDetector()
     private let videoProcessor = VideoProcessor()
@@ -87,6 +89,9 @@ struct ManualMarkingView: View {
 
     var body: some View {
         mainContent
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                bottomExportBar
+            }
             .onPreferenceChange(OnboardingHighlightKey.self) { entries in
                 var dict: [OnboardingHighlightID: CGRect] = [:]
                 for entry in entries { dict[entry.id] = entry.rect }
@@ -94,6 +99,43 @@ struct ManualMarkingView: View {
             }
             .coordinateSpace(name: "onboarding")
             .overlay(onboardingOverlay)
+            .overlay(autoDetectPromptOverlay)
+    }
+
+    private var bottomExportBar: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 8) {
+                Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"))")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary.opacity(0.6))
+
+                Button("Export Settings...") {
+                    showExportSheet = true
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.framePullBlue)
+                .controlSize(.regular)
+                .frame(maxWidth: .infinity)
+                .disabled(!markingState.hasMarkedItems)
+                .help("Configure and export marked stills and clips")
+                .onboardingHighlight(.exportSettings)
+
+                Button(action: { showShortcuts = true }) {
+                    Image(systemName: "keyboard")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                        .frame(width: 24, height: 24)
+                        .background(Color.secondary.opacity(0.12))
+                        .cornerRadius(5)
+                }
+                .buttonStyle(.plain)
+                .help("Keyboard Shortcuts")
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 6)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var mainContent: some View {
@@ -115,62 +157,30 @@ struct ManualMarkingView: View {
 
                 Divider()
 
-                // Inline generate markers panel
-                if showAnalysisDialog {
-                    inlineGeneratePanel
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                    Divider()
-                }
-
-                // Marked items list — shrinks first so export bar always stays visible
+                // Everything below the controls bar scrolls together
                 ScrollView(showsIndicators: true) {
-                    VStack(spacing: 16) {
-                        if appState.exportStillsEnabled {
-                            stillsSection
+                    VStack(spacing: 0) {
+                        // Inline generate markers panel
+                        if showAnalysisDialog {
+                            inlineGeneratePanel
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                            Divider()
                         }
-                        if appState.exportMovingClipsEnabled {
-                            clipsSection
+
+                        VStack(spacing: 16) {
+                            if appState.exportStillsEnabled {
+                                stillsSection
+                            }
+                            if appState.exportMovingClipsEnabled {
+                                clipsSection
+                            }
                         }
+                        .padding()
                     }
-                    .padding()
                 }
                 .scrollIndicators(.visible)
                 .layoutPriority(-1)
-                .frame(minHeight: 0)
-
-                Divider()
-
-                // Bottom: Version + Export button + shortcuts button (always visible)
-                HStack(spacing: 8) {
-                    Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"))")
-                        .font(.system(size: 9))
-                        .foregroundColor(.secondary.opacity(0.6))
-
-                    Button("Export Settings...") {
-                        showExportSheet = true
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.framePullBlue)
-                    .controlSize(.regular)
-                    .frame(maxWidth: .infinity)
-                    .disabled(!markingState.hasMarkedItems)
-                    .help("Configure and export marked stills and clips")
-                    .onboardingHighlight(.exportSettings)
-
-                    Button(action: { showShortcuts = true }) {
-                        Image(systemName: "keyboard")
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
-                            .frame(width: 24, height: 24)
-                            .background(Color.secondary.opacity(0.12))
-                            .cornerRadius(5)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Keyboard Shortcuts")
-                }
-                .padding(.horizontal)
-                .padding(.vertical, 6)
-                .layoutPriority(1)
+                .frame(minHeight: 60)
             }
             .onChange(of: geometry.size.height) { newHeight in
                 let maxPlayerHeight = max(120, newHeight - fixedChromeHeight)
@@ -194,6 +204,9 @@ struct ManualMarkingView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     showOnboarding = true
                 }
+            } else {
+                // Onboarding already done — prompt for auto-detect directly
+                maybeShowAutoDetectPrompt()
             }
 
             // Sync cached cuts from appState (if previously detected)
@@ -208,7 +221,15 @@ struct ManualMarkingView: View {
             let ms = markingState
             let pc = playerController
             let app = appState
-            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+                // Don't intercept keys when a sheet, overlay, or popup is open
+                if self.showExportSheet || self.showShortcuts || self.showOnboarding || self.showAutoDetectPrompt {
+                    return event
+                }
+                // Don't intercept when a sheet is attached to the window (e.g. Preview & Select)
+                if NSApp.mainWindow?.sheets.isEmpty == false {
+                    return event
+                }
                 // When a text field has focus, only intercept marking keys (s/i/o/space/esc/delete)
                 if let responder = event.window?.firstResponder, responder is NSTextView {
                     let chars = event.charactersIgnoringModifiers?.lowercased() ?? ""
@@ -297,7 +318,11 @@ struct ManualMarkingView: View {
             }
         }
         .onChange(of: showOnboarding) { showing in
-            if !showing { forceGuidedOnboarding = false }
+            if !showing {
+                forceGuidedOnboarding = false
+                // After onboarding finishes, prompt for auto-detect
+                maybeShowAutoDetectPrompt()
+            }
         }
         .onChange(of: playerController.duration) { newDuration in
             if newDuration > 0 {
@@ -410,6 +435,32 @@ struct ManualMarkingView: View {
                 isPresented: $showOnboarding,
                 forceGuided: forceGuidedOnboarding
             )
+        }
+    }
+
+    // MARK: - Auto-Detect Cuts Prompt
+
+    @ViewBuilder
+    private var autoDetectPromptOverlay: some View {
+        if showAutoDetectPrompt {
+            ZStack {
+                Color.black.opacity(0.3)
+                    .onTapGesture {
+                        withAnimation(.easeOut(duration: 0.2)) { showAutoDetectPrompt = false }
+                    }
+
+                AutoDetectPromptView(
+                    onDetect: {
+                        withAnimation(.easeOut(duration: 0.2)) { showAutoDetectPrompt = false }
+                        detectScenes()
+                    },
+                    onSkip: {
+                        withAnimation(.easeOut(duration: 0.2)) { showAutoDetectPrompt = false }
+                    }
+                )
+                .transition(.scale(scale: 0.9).combined(with: .opacity))
+            }
+            .ignoresSafeArea()
         }
     }
 
@@ -1141,6 +1192,13 @@ struct ManualMarkingView: View {
                         .toggleStyle(.checkbox)
                         .font(.caption)
                         .help("Allow generated clips to overlap in time")
+                    Button(action: { fillTimelineGaps() }) {
+                        Label("Fill Timeline", systemImage: "rectangle.split.3x1.fill")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.framePullBlue)
+                    .help("Add clips to fill gaps between existing segments, using the scenes-per-clip setting for target size")
                 }
                 .disabled(!appState.exportMovingClipsEnabled)
                 .opacity(appState.exportMovingClipsEnabled ? 1 : 0.4)
@@ -1246,7 +1304,15 @@ struct ManualMarkingView: View {
 
                         Spacer()
 
-                        Button(action: { playerController.seek(to: still.timestamp) }) {
+                        Button(action: {
+                            playerController.seek(to: still.timestamp)
+                            withAnimation(.easeOut(duration: 0.15)) { previewingItemId = still.id }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                withAnimation(.easeOut(duration: 0.3)) {
+                                    if previewingItemId == still.id { previewingItemId = nil }
+                                }
+                            }
+                        }) {
                             Image(systemName: "eye")
                         }
                         .buttonStyle(.plain)
@@ -1262,7 +1328,16 @@ struct ManualMarkingView: View {
                     }
                     .padding(.vertical, 4)
                     .padding(.horizontal, 8)
-                    .background(Color(NSColor.controlBackgroundColor))
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(previewingItemId == still.id
+                                  ? Color.framePullBlue.opacity(0.15)
+                                  : Color(NSColor.controlBackgroundColor))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(previewingItemId == still.id ? Color.framePullBlue.opacity(0.4) : .clear, lineWidth: 1)
+                    )
                     .cornerRadius(6)
                     .onTapGesture(count: 2) {
                         markingState.removeStill(id: still.id)
@@ -1313,7 +1388,15 @@ struct ManualMarkingView: View {
 
                         Spacer()
 
-                        Button(action: { playerController.seek(to: clip.inPoint) }) {
+                        Button(action: {
+                            playerController.seek(to: clip.inPoint)
+                            withAnimation(.easeOut(duration: 0.15)) { previewingItemId = clip.id }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                withAnimation(.easeOut(duration: 0.3)) {
+                                    if previewingItemId == clip.id { previewingItemId = nil }
+                                }
+                            }
+                        }) {
                             Image(systemName: "eye")
                         }
                         .buttonStyle(.plain)
@@ -1350,7 +1433,16 @@ struct ManualMarkingView: View {
                     }
                     .padding(.vertical, 4)
                     .padding(.horizontal, 8)
-                    .background(Color(NSColor.controlBackgroundColor))
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(previewingItemId == clip.id
+                                  ? Color.framePullBlue.opacity(0.15)
+                                  : Color(NSColor.controlBackgroundColor))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(previewingItemId == clip.id ? Color.framePullBlue.opacity(0.4) : .clear, lineWidth: 1)
+                    )
                     .cornerRadius(6)
                     .onTapGesture(count: 2) {
                         if loopingClipId == clip.id {
@@ -1796,8 +1888,103 @@ struct ManualMarkingView: View {
 
     /// Regenerate both stills and clips (used by Generate button)
     private func generateMarkersFromSettings() {
+        // Ensure both types are enabled when auto-generating
+        appState.exportStillsEnabled = true
+        appState.exportMovingClipsEnabled = true
         regenerateStills()
         regenerateClips()
+    }
+
+    /// Fill gaps between existing clips with new segments, preserving all current clips.
+    /// Uses scene boundaries and the scenes-per-clip setting as a target, with ±1 scene variation.
+    private func fillTimelineGaps() {
+        let previousStills = markingState.markedStills
+        let previousClips = markingState.markedClips
+
+        let scenes = effectiveScenes
+        guard !scenes.isEmpty else { return }
+
+        let frameDuration = 1.0 / 25.0
+        let cutMargin = 0.042 // ~1 frame at 24fps
+        let targetWindowSize = min(appState.scenesPerClip, scenes.count)
+
+        // Collect existing clip intervals (both manual and auto)
+        let existingClips = markingState.markedClips.sorted { $0.inPoint < $1.inPoint }
+
+        // Build list of gap intervals (uncovered time ranges)
+        var gaps: [(start: Double, end: Double)] = []
+        var cursor = scenes.first!.start
+        for clip in existingClips {
+            if clip.inPoint > cursor + frameDuration * 2 {
+                gaps.append((start: cursor, end: clip.inPoint))
+            }
+            cursor = max(cursor, clip.outPoint)
+        }
+        let timelineEnd = scenes.last!.end
+        if cursor < timelineEnd - frameDuration * 2 {
+            gaps.append((start: cursor, end: timelineEnd))
+        }
+
+        guard !gaps.isEmpty else { return }
+
+        markingState.suppressUndoCallback = true
+
+        // For each gap, find scenes that fall within it and group them into segments
+        for gap in gaps {
+            // Find scenes that overlap this gap
+            let gapScenes = scenes.enumerated().filter { _, scene in
+                scene.start < gap.end - frameDuration && scene.end > gap.start + frameDuration
+            }
+            guard !gapScenes.isEmpty else { continue }
+
+            var i = 0
+            while i < gapScenes.count {
+                // Vary window size: target ± 1 for variety, clamped to available scenes
+                let variation = gapScenes.count - i >= targetWindowSize + 1
+                    ? Int.random(in: -1...1)
+                    : 0
+                let windowSize = max(1, min(targetWindowSize + variation, gapScenes.count - i))
+
+                let segStartScene = gapScenes[i].element
+                let segEndScene = gapScenes[min(i + windowSize - 1, gapScenes.count - 1)].element
+
+                // Clamp to gap boundaries
+                let segStart = max(segStartScene.start + cutMargin, gap.start)
+                let segEnd = min(segEndScene.end - cutMargin, gap.end)
+
+                // Safety: ensure at least 2 frames of content, skip last frame to avoid flash
+                let inPoint = segStart + frameDuration
+                let outPoint = segEnd - frameDuration
+
+                if outPoint > inPoint + frameDuration {
+                    let clip = MarkedClip(
+                        inPoint: inPoint,
+                        outPoint: outPoint,
+                        isManual: false
+                    )
+                    markingState.markedClips.append(clip)
+                }
+
+                i += windowSize
+            }
+        }
+
+        markingState.markedClips.sort { $0.inPoint < $1.inPoint }
+        markingState.suppressUndoCallback = false
+
+        appState.appUndoStack.append(.settingsRegeneration(
+            previousStills: previousStills, previousClips: previousClips,
+            description: "Fill timeline gaps"))
+    }
+
+    private func maybeShowAutoDetectPrompt() {
+        // Don't prompt if user opted out, or cuts already detected, or already detecting
+        guard !UserDefaults.standard.bool(forKey: "autoDetectPromptDontShow") else { return }
+        guard !appState.scenesDetected else { return }
+        guard !isDetectingScenes else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            showAutoDetectPrompt = true
+        }
     }
 
     private func detectScenes() {
@@ -2080,6 +2267,11 @@ struct ManualTimelineView: View {
                                     clipDragOffset = 0
                                 }
                         )
+                        .contextMenu {
+                            Button(role: .destructive) { onClipRemoved(clip.id) } label: {
+                                Label("Delete Clip", systemImage: "trash")
+                            }
+                        }
                         .position(x: displayInX, y: clipY)
                         .zIndex(isDragging && draggingClipEdge == .inPoint ? 50 : 5)
 
@@ -2132,6 +2324,11 @@ struct ManualTimelineView: View {
                                     clipDragOffset = 0
                                 }
                         )
+                        .contextMenu {
+                            Button(role: .destructive) { onClipRemoved(clip.id) } label: {
+                                Label("Delete Clip", systemImage: "trash")
+                            }
+                        }
                         .position(x: displayOutX, y: clipY)
                         .zIndex(isDragging && draggingClipEdge == .outPoint ? 50 : 5)
                 }
@@ -2449,6 +2646,10 @@ struct MarkerPreviewView: View {
     let reframeRatio: VideoSnippetProcessor.AspectRatioCrop?
     var showStills: Bool = true
     var showClips: Bool = true
+    /// When true, shows checkboxes for item selection and a confirm button
+    var selectMode: Bool = false
+    /// Called when user confirms selection in selectMode — passes (selectedStillIDs, selectedClipIDs)
+    var onSelectionConfirm: ((Set<UUID>, Set<UUID>) -> Void)? = nil
 
     private var markedStills: [MarkedStill] { showStills ? markingState.markedStills : [] }
     private var markedClips: [MarkedClip] { showClips ? markingState.markedClips : [] }
@@ -2462,15 +2663,22 @@ struct MarkerPreviewView: View {
     // Loading gate — grid only appears after ALL previews are ready
     @State private var isLoadingPreviews = true
     @State private var loadingProgress: Double = 0
+    @State private var isGeneratingGIFs = false
 
     // Lightbox
     @State private var lightboxIndex: Int? = nil
     @State private var lightboxKeyMonitor: Any? = nil
+    @State private var gridKeyMonitor: Any? = nil
+    @State private var hoveredItemIndex: Int? = nil
 
     // Reframe
     @State private var localReframeOffset: CGFloat = 0.5
     @State private var dragStartOffset: CGFloat = 0.5
     @State private var isDraggingReframe = false
+
+    // Selection (for selectMode)
+    @State private var selectedStillIDs: Set<UUID> = []
+    @State private var selectedClipIDs: Set<UUID> = []
 
     private let thumbWidth: CGFloat = 160
     private let thumbHeight: CGFloat = 90
@@ -2482,18 +2690,39 @@ struct MarkerPreviewView: View {
         markedClips.map { ("clip_\($0.id)", "\($0.formattedInPoint) – \($0.formattedOutPoint)") }
     }
 
+    private var selectedStillCount: Int { selectedStillIDs.count }
+    private var selectedClipCount: Int { selectedClipIDs.count }
+    private var totalSelectedCount: Int { selectedStillCount + selectedClipCount }
+    private var allSelected: Bool {
+        selectedStillIDs.count == markedStills.count && selectedClipIDs.count == markedClips.count
+    }
+
     var body: some View {
         ZStack {
             VStack(alignment: .leading, spacing: 12) {
                 // Header — always visible
                 HStack {
-                    Text("Preview & Reframe").font(.headline)
+                    Text(selectMode ? "Select & Export" : "Preview & Reframe").font(.headline)
                     Spacer()
+                    if selectMode {
+                        Button(allSelected ? "Deselect All" : "Select All") {
+                            if allSelected {
+                                selectedStillIDs.removeAll()
+                                selectedClipIDs.removeAll()
+                            } else {
+                                selectedStillIDs = Set(markedStills.map(\.id))
+                                selectedClipIDs = Set(markedClips.map(\.id))
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.framePullBlue)
+                        .font(.callout)
+                    }
                     Button { dismiss() } label: {
                         Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Close preview")
+                    .help("Close")
                 }
 
                 if isLoadingPreviews {
@@ -2515,95 +2744,206 @@ struct MarkerPreviewView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
                             if !markedStills.isEmpty {
-                                Text("STILLS (\(markedStills.count))")
+                                Text("STILLS (\(selectMode ? "\(selectedStillCount)/" : "")\(markedStills.count))")
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundColor(.orange)
                                 LazyVGrid(columns: columns, spacing: 10) {
                                     ForEach(Array(markedStills.enumerated()), id: \.element.id) { i, still in
-                                        VStack(spacing: 4) {
-                                            if let img = thumbnails["still_\(still.id)"] {
-                                                Image(nsImage: img)
-                                                    .resizable()
-                                                    .aspectRatio(contentMode: .fill)
-                                                    .frame(width: thumbWidth, height: thumbHeight)
-                                                    .clipped()
-                                                    .cornerRadius(6)
-                                            } else {
-                                                RoundedRectangle(cornerRadius: 6)
-                                                    .fill(Color.gray.opacity(0.15))
-                                                    .frame(width: thumbWidth, height: thumbHeight)
+                                        let isSelected = selectedStillIDs.contains(still.id)
+                                        let isHovered = hoveredItemIndex == i
+                                        ZStack(alignment: .topLeading) {
+                                            VStack(spacing: 4) {
+                                                if let img = thumbnails["still_\(still.id)"] {
+                                                    Image(nsImage: img)
+                                                        .resizable()
+                                                        .aspectRatio(contentMode: .fit)
+                                                        .frame(width: thumbWidth, height: thumbHeight)
+                                                        .cornerRadius(6)
+                                                } else {
+                                                    RoundedRectangle(cornerRadius: 6)
+                                                        .fill(Color.gray.opacity(0.15))
+                                                        .frame(width: thumbWidth, height: thumbHeight)
+                                                }
+                                                Text(still.formattedTime)
+                                                    .font(.system(size: 10, design: .monospaced))
+                                                    .foregroundColor(.secondary)
                                             }
-                                            Text(still.formattedTime)
-                                                .font(.system(size: 10, design: .monospaced))
-                                                .foregroundColor(.secondary)
+                                            .opacity(selectMode && !isSelected ? 0.4 : 1.0)
+
+                                            if selectMode {
+                                                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                                    .font(.title3)
+                                                    .foregroundColor(isSelected ? .framePullAmber : .secondary)
+                                                    .background(Circle().fill(Color.black.opacity(0.3)).padding(-2))
+                                                    .padding(4)
+                                            }
                                         }
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .stroke(Color.framePullAmber, lineWidth: isHovered ? 2 : 0)
+                                                .shadow(color: isHovered ? Color.framePullAmber.opacity(0.5) : .clear, radius: isHovered ? 6 : 0)
+                                                .animation(.easeInOut(duration: 0.15), value: isHovered)
+                                        )
+                                        .scaleEffect(isHovered ? 1.03 : 1.0)
+                                        .animation(.easeInOut(duration: 0.15), value: isHovered)
                                         .contentShape(Rectangle())
-                                        .onTapGesture { lightboxIndex = i }
-                                        .help("Click to enlarge")
+                                        .onHover { hovering in hoveredItemIndex = hovering ? i : (hoveredItemIndex == i ? nil : hoveredItemIndex) }
+                                        .onTapGesture {
+                                            if selectMode {
+                                                if isSelected { selectedStillIDs.remove(still.id) }
+                                                else { selectedStillIDs.insert(still.id) }
+                                            } else {
+                                                lightboxIndex = i
+                                            }
+                                        }
+                                        .help(selectMode ? "Click to select/deselect · Space to preview" : "Click to enlarge · Space to preview")
                                     }
                                 }
                             }
 
                             if !markedClips.isEmpty {
-                                Text("CLIPS (\(markedClips.count))")
+                                Text("CLIPS (\(selectMode ? "\(selectedClipCount)/" : "")\(markedClips.count))")
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundColor(.green)
                                 LazyVGrid(columns: columns, spacing: 10) {
                                     ForEach(Array(markedClips.enumerated()), id: \.element.id) { j, clip in
                                         let clipKey = "clip_\(clip.id)"
-                                        VStack(spacing: 4) {
-                                            ZStack(alignment: .center) {
-                                                if let gifURL = clipGIFURLs[clipKey] {
-                                                    AnimatedGIFView(url: gifURL)
-                                                        .frame(width: thumbWidth, height: thumbHeight)
-                                                        .clipped()
-                                                        .cornerRadius(6)
-                                                } else if let img = thumbnails[clipKey] {
-                                                    Image(nsImage: img)
-                                                        .resizable()
-                                                        .aspectRatio(contentMode: .fill)
-                                                        .frame(width: thumbWidth, height: thumbHeight)
-                                                        .clipped()
-                                                        .cornerRadius(6)
-                                                }
-                                                // Duration badge
-                                                VStack {
-                                                    Spacer()
-                                                    HStack {
-                                                        Spacer()
-                                                        Text(clip.formattedDuration)
-                                                            .font(.system(size: 9, design: .monospaced))
-                                                            .foregroundColor(.white)
-                                                            .padding(.horizontal, 4)
-                                                            .padding(.vertical, 2)
-                                                            .background(.black.opacity(0.7))
-                                                            .cornerRadius(3)
-                                                            .padding(4)
+                                        let isSelected = selectedClipIDs.contains(clip.id)
+                                        let clipItemIndex = markedStills.count + j
+                                        let isHovered = hoveredItemIndex == clipItemIndex
+                                        ZStack(alignment: .topLeading) {
+                                            VStack(spacing: 4) {
+                                                ZStack(alignment: .center) {
+                                                    if let gifURL = clipGIFURLs[clipKey] {
+                                                        AnimatedGIFView(url: gifURL)
+                                                            .frame(width: thumbWidth, height: thumbHeight)
+                                                            .clipped()
+                                                            .cornerRadius(6)
+                                                    } else if let img = thumbnails[clipKey] {
+                                                        Image(nsImage: img)
+                                                            .resizable()
+                                                            .aspectRatio(contentMode: .fit)
+                                                            .frame(width: thumbWidth, height: thumbHeight)
+                                                            .cornerRadius(6)
                                                     }
+                                                    // GIF generation spinner
+                                                    if isGeneratingGIFs && clipGIFURLs[clipKey] == nil {
+                                                        VStack {
+                                                            HStack {
+                                                                ProgressView()
+                                                                    .scaleEffect(0.6)
+                                                                    .padding(4)
+                                                                    .background(Circle().fill(Color.black.opacity(0.6)))
+                                                                Spacer()
+                                                            }
+                                                            Spacer()
+                                                        }
+                                                        .frame(width: thumbWidth, height: thumbHeight)
+                                                    }
+                                                    // Duration badge
+                                                    VStack {
+                                                        Spacer()
+                                                        HStack {
+                                                            Spacer()
+                                                            Text(clip.formattedDuration)
+                                                                .font(.system(size: 9, design: .monospaced))
+                                                                .foregroundColor(.white)
+                                                                .padding(.horizontal, 4)
+                                                                .padding(.vertical, 2)
+                                                                .background(.black.opacity(0.7))
+                                                                .cornerRadius(3)
+                                                                .padding(4)
+                                                        }
+                                                    }
+                                                    .frame(width: thumbWidth, height: thumbHeight)
                                                 }
-                                                .frame(width: thumbWidth, height: thumbHeight)
+                                                Text("\(clip.formattedInPoint) – \(clip.formattedOutPoint)")
+                                                    .font(.system(size: 10, design: .monospaced))
+                                                    .foregroundColor(.secondary)
                                             }
-                                            Text("\(clip.formattedInPoint) – \(clip.formattedOutPoint)")
-                                                .font(.system(size: 10, design: .monospaced))
-                                                .foregroundColor(.secondary)
+                                            .opacity(selectMode && !isSelected ? 0.4 : 1.0)
+
+                                            if selectMode {
+                                                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                                    .font(.title3)
+                                                    .foregroundColor(isSelected ? .framePullAmber : .secondary)
+                                                    .background(Circle().fill(Color.black.opacity(0.3)).padding(-2))
+                                                    .padding(4)
+                                            }
                                         }
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .stroke(Color.framePullAmber, lineWidth: isHovered ? 2 : 0)
+                                                .shadow(color: isHovered ? Color.framePullAmber.opacity(0.5) : .clear, radius: isHovered ? 6 : 0)
+                                                .animation(.easeInOut(duration: 0.15), value: isHovered)
+                                        )
+                                        .scaleEffect(isHovered ? 1.03 : 1.0)
+                                        .animation(.easeInOut(duration: 0.15), value: isHovered)
                                         .contentShape(Rectangle())
-                                        .onTapGesture { lightboxIndex = markedStills.count + j }
-                                        .help("Click to enlarge")
+                                        .onHover { hovering in hoveredItemIndex = hovering ? clipItemIndex : (hoveredItemIndex == clipItemIndex ? nil : hoveredItemIndex) }
+                                        .onTapGesture {
+                                            if selectMode {
+                                                if isSelected { selectedClipIDs.remove(clip.id) }
+                                                else { selectedClipIDs.insert(clip.id) }
+                                            } else {
+                                                lightboxIndex = clipItemIndex
+                                            }
+                                        }
+                                        .help(selectMode ? "Click to select/deselect · Space to preview" : "Click to enlarge · Space to preview")
                                     }
                                 }
                             }
                         }
                         .padding(.bottom)
                     }
+
+                    // ── Select mode footer ─────────────────────────────────
+                    if selectMode {
+                        Divider()
+                        HStack {
+                            Text("\(totalSelectedCount) item\(totalSelectedCount == 1 ? "" : "s") selected")
+                                .font(.callout)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Button {
+                                onSelectionConfirm?(selectedStillIDs, selectedClipIDs)
+                            } label: {
+                                Label("Confirm Selection", systemImage: "checkmark.circle")
+                                    .font(.callout.weight(.semibold))
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.framePullAmber)
+                            .disabled(totalSelectedCount == 0)
+                        }
+                        .padding(.top, 4)
+                    }
                 }
             }
             .padding()
-            .frame(width: 560, height: 500)
+            .frame(width: 680, height: selectMode ? 620 : 560)
             .task { await generateAllPreviews() }
+            .onAppear {
+                if selectMode {
+                    // Initialize all items as selected
+                    selectedStillIDs = Set(markedStills.map(\.id))
+                    selectedClipIDs = Set(markedClips.map(\.id))
+                }
+                // Grid-level spacebar monitor — opens lightbox on hovered item
+                gridKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                    guard event.keyCode == 49, self.lightboxIndex == nil else { return event }
+                    // Space pressed while no lightbox — open on hovered item or first item
+                    let idx = self.hoveredItemIndex ?? 0
+                    if idx < self.allItems.count {
+                        self.lightboxIndex = idx
+                        return nil
+                    }
+                    return event
+                }
+            }
             .onDisappear {
                 cleanupTempGIFs()
                 if let m = lightboxKeyMonitor { NSEvent.removeMonitor(m); lightboxKeyMonitor = nil }
+                if let m = gridKeyMonitor { NSEvent.removeMonitor(m); gridKeyMonitor = nil }
             }
             .onChange(of: lightboxIndex) { newIdx in
                 if let idx = newIdx {
@@ -2620,7 +2960,7 @@ struct MarkerPreviewView: View {
                             switch event.keyCode {
                             case 123: if let i = self.lightboxIndex, i > 0 { self.lightboxIndex = i - 1 }; return nil
                             case 124: if let i = self.lightboxIndex, i < self.allItems.count - 1 { self.lightboxIndex = i + 1 }; return nil
-                            case 53: self.lightboxIndex = nil; return nil
+                            case 49, 53: self.lightboxIndex = nil; return nil  // Space or Esc closes lightbox
                             default: return event
                             }
                         }
@@ -2646,7 +2986,9 @@ struct MarkerPreviewView: View {
         if let idx = lightboxIndex {
             let items = allItems
             ZStack {
-                Color.black.opacity(0.88).onTapGesture { lightboxIndex = nil }
+                Color.black.opacity(0.88).onTapGesture {
+                    if !selectMode { lightboxIndex = nil }
+                }
                 VStack(spacing: 0) {
                     HStack {
                         Text("\(idx + 1) of \(items.count)")
@@ -2677,9 +3019,12 @@ struct MarkerPreviewView: View {
                             let key = items[idx].key
                             if isClip, let gifURL = clipGIFURLs[key] {
                                 ZStack {
-                                    AnimatedGIFView(url: gifURL)
+                                    AnimatedGIFView(url: gifURL, allowScaleUp: true)
                                         .id(key) // Force recreation when switching clips
-                                        .aspectRatio(contentMode: .fit).cornerRadius(8)
+                                        .aspectRatio(16.0/9.0, contentMode: .fit).cornerRadius(8)
+                                    Text("Preview quality")
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundColor(.white.opacity(0.35))
                                     if reframeRatio != nil { reframeCropOverlay }
                                 }
                             } else if let img = thumbnails[key] {
@@ -2695,7 +3040,40 @@ struct MarkerPreviewView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .padding(.vertical, 12)
                         .contentShape(Rectangle())
+                        .overlay(alignment: .topLeading) {
+                            if selectMode {
+                                let isClipItem = idx >= markedStills.count
+                                let itemID = isClipItem ? markedClips[idx - markedStills.count].id : markedStills[idx].id
+                                let isSelected = isClipItem ? selectedClipIDs.contains(itemID) : selectedStillIDs.contains(itemID)
+                                Button {
+                                    if isClipItem {
+                                        if isSelected { selectedClipIDs.remove(itemID) } else { selectedClipIDs.insert(itemID) }
+                                    } else {
+                                        if isSelected { selectedStillIDs.remove(itemID) } else { selectedStillIDs.insert(itemID) }
+                                    }
+                                } label: {
+                                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                        .font(.title2)
+                                        .foregroundColor(isSelected ? .framePullAmber : .white.opacity(0.6))
+                                        .shadow(radius: 4)
+                                }
+                                .buttonStyle(.plain)
+                                .padding(16)
+                                .help(isSelected ? "Deselect" : "Select")
+                            }
+                        }
                         .gesture(reframeRatio != nil ? reframeDragGesture(for: items[idx].key) : nil)
+                        .onTapGesture {
+                            if selectMode {
+                                let isClipItem = idx >= markedStills.count
+                                let itemID = isClipItem ? markedClips[idx - markedStills.count].id : markedStills[idx].id
+                                if isClipItem {
+                                    if selectedClipIDs.contains(itemID) { selectedClipIDs.remove(itemID) } else { selectedClipIDs.insert(itemID) }
+                                } else {
+                                    if selectedStillIDs.contains(itemID) { selectedStillIDs.remove(itemID) } else { selectedStillIDs.insert(itemID) }
+                                }
+                            }
+                        }
                         .onHover { hovering in
                             if reframeRatio != nil {
                                 if hovering { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
@@ -2859,7 +3237,7 @@ struct MarkerPreviewView: View {
         }
 
         // Show the grid immediately — GIFs will appear as they finish
-        await MainActor.run { loadingProgress = 1; isLoadingPreviews = false }
+        await MainActor.run { loadingProgress = 1; isLoadingPreviews = false; isGeneratingGIFs = true }
 
         // ── Phase 2: lightweight GIFs (10 fps, max 5 s) ───────────────────
         let tempDir = FileManager.default.temporaryDirectory
@@ -2905,6 +3283,8 @@ struct MarkerPreviewView: View {
                 await MainActor.run { clipGIFURLs[clipKey] = gifURL }
             }
         }
+
+        await MainActor.run { isGeneratingGIFs = false }
     }
 
     private func cleanupTempGIFs() {
@@ -2919,14 +3299,18 @@ struct MarkerPreviewView: View {
 
 struct AnimatedGIFView: NSViewRepresentable {
     let url: URL
+    var allowScaleUp: Bool = false
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSImageView {
         let imageView = NSImageView()
         imageView.animates = true
-        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.imageScaling = allowScaleUp ? .scaleProportionallyUpOrDown : .scaleProportionallyDown
+        imageView.imageAlignment = .alignCenter
         imageView.canDrawSubviewsIntoLayer = true
+        imageView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        imageView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         if let image = NSImage(contentsOf: url) {
             imageView.image = image
         }
@@ -2942,6 +3326,7 @@ struct AnimatedGIFView: NSViewRepresentable {
         } else if nsView.image == nil {
             nsView.image = NSImage(contentsOf: url)
         }
+        nsView.imageScaling = allowScaleUp ? .scaleProportionallyUpOrDown : .scaleProportionallyDown
         nsView.animates = true
     }
 

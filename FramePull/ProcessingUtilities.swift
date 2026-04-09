@@ -1,7 +1,7 @@
 import Foundation
 import CoreGraphics
 
-/// Shared utilities used by VideoProcessor, GIFProcessor, and VideoSnippetProcessor
+/// Shared utilities used by VideoProcessor and VideoSnippetProcessor
 enum ProcessingUtilities {
 
     /// Ensure a subdirectory exists and return its URL

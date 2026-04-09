@@ -23,10 +23,6 @@
 		A1VID0T02 /* VideoTutorial1.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = A1VID0T01 /* VideoTutorial1.mp4 */; };
 		A1LUT002 /* LUTProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1LUT001 /* LUTProcessor.swift */; };
 		A1LUTF02 /* LUTs in Resources */ = {isa = PBXBuildFile; fileRef = A1LUTF01 /* LUTs */; };
-		A1GIF0102 /* 1_detectcuts.gif in Resources */ = {isa = PBXBuildFile; fileRef = A1GIF0101 /* 1_detectcuts.gif */; };
-		A1GIF0202 /* 2_manualmarkers.gif in Resources */ = {isa = PBXBuildFile; fileRef = A1GIF0201 /* 2_manualmarkers.gif */; };
-		A1GIF0302 /* 3_autogen.gif in Resources */ = {isa = PBXBuildFile; fileRef = A1GIF0301 /* 3_autogen.gif */; };
-		A1GIF0402 /* 4_export.gif in Resources */ = {isa = PBXBuildFile; fileRef = A1GIF0401 /* 4_export.gif */; };
 		A1ONBOARD02 /* OnboardingOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1ONBOARD01 /* OnboardingOverlay.swift */; };
 /* End PBXBuildFile section */
 
@@ -49,10 +45,6 @@
 		A1VID0T01 /* VideoTutorial1.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = VideoTutorial1.mp4; sourceTree = "<group>"; };
 		A1LUT001 /* LUTProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LUTProcessor.swift; sourceTree = "<group>"; };
 		A1LUTF01 /* LUTs */ = {isa = PBXFileReference; lastKnownFileType = folder; path = LUTs; sourceTree = "<group>"; };
-		A1GIF0101 /* 1_detectcuts.gif */ = {isa = PBXFileReference; lastKnownFileType = image.gif; path = 1_detectcuts.gif; sourceTree = "<group>"; };
-		A1GIF0201 /* 2_manualmarkers.gif */ = {isa = PBXFileReference; lastKnownFileType = image.gif; path = 2_manualmarkers.gif; sourceTree = "<group>"; };
-		A1GIF0301 /* 3_autogen.gif */ = {isa = PBXFileReference; lastKnownFileType = image.gif; path = 3_autogen.gif; sourceTree = "<group>"; };
-		A1GIF0401 /* 4_export.gif */ = {isa = PBXFileReference; lastKnownFileType = image.gif; path = 4_export.gif; sourceTree = "<group>"; };
 		A1ONBOARD01 /* OnboardingOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingOverlay.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -95,10 +87,6 @@
 				A1000007 /* Info.plist */,
 				A1000051 /* PrivacyInfo.xcprivacy */,
 				A1VID0T01 /* VideoTutorial1.mp4 */,
-				A1GIF0101 /* 1_detectcuts.gif */,
-				A1GIF0201 /* 2_manualmarkers.gif */,
-				A1GIF0301 /* 3_autogen.gif */,
-				A1GIF0401 /* 4_export.gif */,
 				A1ONBOARD01 /* OnboardingOverlay.swift */,
 			);
 			path = FramePull;
@@ -175,10 +163,6 @@
 				A1000050 /* PrivacyInfo.xcprivacy in Resources */,
 				A1VID0T02 /* VideoTutorial1.mp4 in Resources */,
 				A1LUTF02 /* LUTs in Resources */,
-				A1GIF0102 /* 1_detectcuts.gif in Resources */,
-				A1GIF0202 /* 2_manualmarkers.gif in Resources */,
-				A1GIF0302 /* 3_autogen.gif in Resources */,
-				A1GIF0402 /* 4_export.gif in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

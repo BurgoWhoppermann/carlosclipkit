@@ -16,21 +16,36 @@ struct ExportSettingsView: View {
     @State private var isExporting = false
     @State private var exportProgress: Double = 0
     @State private var exportStatusMessage = ""
-    @State private var showPreview = false
+    @State private var showPreviewSelect = false
+
+    /// When set via "Preview & Select", only these items are exported
+    @State private var selectedStillIDs: Set<UUID>? = nil
+    @State private var selectedClipIDs: Set<UUID>? = nil
 
     private let videoProcessor = VideoProcessor()
     private let snippetProcessor = VideoSnippetProcessor()
+
+    /// Display counts — filtered when a selection is active
+    private var displayStillCount: Int {
+        if let ids = selectedStillIDs { return ids.count } else { return stillCount }
+    }
+    private var displayClipCount: Int {
+        if let ids = selectedClipIDs { return ids.count } else { return clipCount }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             // Header
             HStack {
+                Spacer()
                 Image(nsImage: Self.appIcon)
                     .resizable()
-                    .frame(width: 24, height: 24)
+                    .frame(width: 28, height: 28)
                 Text("Export Settings")
-                    .font(.headline)
+                    .font(.title3.weight(.semibold))
                 Spacer()
+            }
+            .overlay(alignment: .trailing) {
                 Button(action: { dismiss() }) {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.secondary)
@@ -42,31 +57,41 @@ struct ExportSettingsView: View {
 
             // Summary
             HStack(spacing: 16) {
-                if appState.exportStillsEnabled && stillCount > 0 {
-                    Label("\(stillCount) stills", systemImage: "photo")
+                if appState.exportStillsEnabled && displayStillCount > 0 {
+                    Label("\(displayStillCount) stills", systemImage: "photo")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
-                if clipCount > 0 {
-                    Label("\(clipCount) clips", systemImage: "film")
+                if displayClipCount > 0 {
+                    Label("\(displayClipCount) clips", systemImage: "film")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
                 Spacer()
-                Button(action: { showPreview = true }) {
-                    Label("Preview & Reframe", systemImage: "eye")
-                        .font(.subheadline)
+            }
+
+            if selectedStillIDs != nil || selectedClipIDs != nil {
+                HStack(spacing: 4) {
+                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                        .foregroundColor(.framePullAmber)
+                    Text("Filtered — exporting \(displayStillCount + displayClipCount) of \(stillCount + clipCount) items")
+                        .font(.caption)
+                        .foregroundColor(.framePullAmber)
+                    Spacer()
+                    Button("Reset") {
+                        selectedStillIDs = nil
+                        selectedClipIDs = nil
+                    }
+                    .font(.caption)
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.framePullBlue)
-                .controlSize(.small)
-                .help("Preview markers and adjust 9:16 or 4:5 crop position")
             }
 
             Divider()
 
             // Stills settings
-            if stillCount > 0 {
+            if displayStillCount > 0 {
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("Export stills", isOn: $appState.exportStillsEnabled)
                         .toggleStyle(.checkbox)
@@ -112,12 +137,12 @@ struct ExportSettingsView: View {
                 }
             }
 
-            if stillCount > 0 && clipCount > 0 {
+            if displayStillCount > 0 && displayClipCount > 0 {
                 Divider()
             }
 
             // Clip export settings (only when clips exist)
-            if clipCount > 0 {
+            if displayClipCount > 0 {
                 // GIF subsection
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("Export GIFs", isOn: $appState.exportGIF)
@@ -212,12 +237,8 @@ struct ExportSettingsView: View {
 
                 // Crop options
                 HStack {
-                    Text("Crop:")
+                    Text("Additional crops:")
                     Spacer()
-                    Toggle("Original", isOn: .constant(true))
-                        .toggleStyle(.checkbox)
-                        .disabled(true)
-                        .help("Original aspect ratio is always exported")
                     Toggle("4:5", isOn: $appState.export4x5)
                         .toggleStyle(.checkbox)
                         .help("Also export a 4:5 vertical crop (Instagram portrait)")
@@ -265,16 +286,28 @@ struct ExportSettingsView: View {
                 }
             }
 
-            // Export button
-            Button(action: { startExport() }) {
-                Text("Export")
-                    .frame(maxWidth: .infinity)
+            // Action buttons
+            HStack(spacing: 10) {
+                Button(action: { showPreviewSelect = true }) {
+                    Label("Preview & Select", systemImage: "checklist")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.framePullAmber)
+                .controlSize(.large)
+                .disabled(isExporting)
+                .help("Preview items, select which to export, and adjust crop positions")
+
+                Button(action: { startExport() }) {
+                    Text("Export")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.framePullBlue)
+                .controlSize(.large)
+                .disabled(appState.saveURL == nil || isExporting || !appState.hasSelectedExportType)
+                .help("Export all marked stills and clips to the selected folder")
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.framePullBlue)
-            .controlSize(.large)
-            .disabled(appState.saveURL == nil || isExporting || !appState.hasSelectedExportType)
-            .help("Export all marked stills and clips to the selected folder")
 
             Label("Files are always added — never overwritten", systemImage: "plus.circle")
                 .font(.caption)
@@ -283,13 +316,17 @@ struct ExportSettingsView: View {
         .padding()
         .frame(width: 400)
         .interactiveDismissDisabled(isExporting)
-        .sheet(isPresented: $showPreview) {
-            MarkerPreviewView(
+        .sheet(isPresented: $showPreviewSelect) {
+            PreviewSelectWrapperView(
                 videoURL: videoURL,
                 markingState: appState.markingState,
                 reframeRatio: appState.export9x16 ? .ratio9x16 : (appState.export4x5 ? .ratio4x5 : nil),
                 showStills: appState.exportStillsEnabled,
-                showClips: appState.exportMovingClipsEnabled
+                showClips: appState.exportMovingClipsEnabled,
+                onConfirm: { stillIDs, clipIDs in
+                    selectedStillIDs = stillIDs
+                    selectedClipIDs = clipIDs
+                }
             )
         }
     }
@@ -304,12 +341,11 @@ struct ExportSettingsView: View {
     }
 
     private var gifSizeEstimate: String {
-        let clips = appState.markingState.markedClips
+        let clips = effectiveClips
         let frameRate = appState.gifFrameRate
         let quality = appState.gifQuality
 
         if clips.isEmpty {
-            // No clips yet — show estimate for a hypothetical 5s clip
             let bytes = appState.gifResolution.estimatedSize(
                 frameRate: frameRate, clipDuration: 5.0, quality: quality
             )
@@ -334,6 +370,20 @@ struct ExportSettingsView: View {
         }
 
         return "\(formatBytes(totalBytes)) total (\(clips.count) clips, \(formatBytes(minBytes))–\(formatBytes(maxBytes)) each)"
+    }
+
+    /// Stills filtered by selection (if provided)
+    private var effectiveStills: [MarkedStill] {
+        let all = appState.markingState.markedStills
+        guard let ids = selectedStillIDs else { return all }
+        return all.filter { ids.contains($0.id) }
+    }
+
+    /// Clips filtered by selection (if provided)
+    private var effectiveClips: [MarkedClip] {
+        let all = appState.markingState.markedClips
+        guard let ids = selectedClipIDs else { return all }
+        return all.filter { ids.contains($0.id) }
     }
 
     private func chooseLocation() {
@@ -378,16 +428,18 @@ struct ExportSettingsView: View {
     // MARK: - Manual Export
 
     private func exportManual(to outputDir: URL) async throws {
-        let markingState = appState.markingState
-        let stillsCount = (appState.exportStillsEnabled && !markingState.markedStills.isEmpty) ? markingState.markedStills.count : 0
-        let clipsCount = appState.exportMovingClipsEnabled ? markingState.markedClips.count : 0
+        let stills = effectiveStills
+        let clips = effectiveClips
+
+        let stillsCount = (appState.exportStillsEnabled && !stills.isEmpty) ? stills.count : 0
+        let clipsCount = appState.exportMovingClipsEnabled ? clips.count : 0
         let totalItems = max(1, stillsCount + clipsCount)
         var completedItems = 0
 
         // Export stills
         if stillsCount > 0 {
-            let timestamps = markingState.markedStills.map { $0.timestamp }
-            let reframeOffsets = markingState.markedStills.map { $0.reframeOffset }
+            let timestamps = stills.map { $0.timestamp }
+            let reframeOffsets = stills.map { $0.reframeOffset }
             await MainActor.run {
                 exportStatusMessage = "Exporting stills..."
             }
@@ -416,9 +468,9 @@ struct ExportSettingsView: View {
 
         // Export clips (as both video AND GIF) — only when moving clips enabled
         if appState.exportMovingClipsEnabled {
-            for (index, clip) in markingState.markedClips.enumerated() {
+            for (index, clip) in clips.enumerated() {
                 await MainActor.run {
-                    exportStatusMessage = "Exporting clip \(index + 1) of \(markingState.markedClips.count)..."
+                    exportStatusMessage = "Exporting clip \(index + 1) of \(clips.count)..."
                 }
 
                 try await snippetProcessor.exportClipAndGIF(
@@ -449,4 +501,37 @@ struct ExportSettingsView: View {
         }
     }
 
+}
+
+// MARK: - Preview & Select Wrapper
+
+/// Thin wrapper around MarkerPreviewView in select mode that reports selected IDs back via callback on dismiss
+struct PreviewSelectWrapperView: View {
+    let videoURL: URL
+    @ObservedObject var markingState: MarkingState
+    let reframeRatio: VideoSnippetProcessor.AspectRatioCrop?
+    var showStills: Bool = true
+    var showClips: Bool = true
+    let onConfirm: (Set<UUID>, Set<UUID>) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var selectedStillIDs: Set<UUID> = []
+    @State private var selectedClipIDs: Set<UUID> = []
+    @State private var didInit = false
+
+    var body: some View {
+        MarkerPreviewView(
+            videoURL: videoURL,
+            markingState: markingState,
+            reframeRatio: reframeRatio,
+            showStills: showStills,
+            showClips: showClips,
+            selectMode: true,
+            onSelectionConfirm: { stillIDs, clipIDs in
+                onConfirm(stillIDs, clipIDs)
+                dismiss()
+            }
+        )
+    }
 }
