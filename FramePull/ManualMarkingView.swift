@@ -70,6 +70,9 @@ struct ManualMarkingView: View {
     @State private var clipsExpanded = false
     @State private var loopingClipId: UUID? = nil
     @State private var showShortcuts = false
+    @State private var showOnboarding = false
+    @State private var forceGuidedOnboarding = false
+    @State private var onboardingHighlights: [OnboardingHighlightID: CGRect] = [:]
 
     private let sceneDetector = SceneDetector()
     private let videoProcessor = VideoProcessor()
@@ -83,6 +86,17 @@ struct ManualMarkingView: View {
     private let fixedChromeHeight: CGFloat = 260
 
     var body: some View {
+        mainContent
+            .onPreferenceChange(OnboardingHighlightKey.self) { entries in
+                var dict: [OnboardingHighlightID: CGRect] = [:]
+                for entry in entries { dict[entry.id] = entry.rect }
+                onboardingHighlights = dict
+            }
+            .coordinateSpace(name: "onboarding")
+            .overlay(onboardingOverlay)
+    }
+
+    private var mainContent: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 // Marker hint bar
@@ -141,6 +155,7 @@ struct ManualMarkingView: View {
                     .frame(maxWidth: .infinity)
                     .disabled(!markingState.hasMarkedItems)
                     .help("Configure and export marked stills and clips")
+                    .onboardingHighlight(.exportSettings)
 
                     Button(action: { showShortcuts = true }) {
                         Image(systemName: "keyboard")
@@ -174,6 +189,13 @@ struct ManualMarkingView: View {
             showExportSheet = true
         }
         .onAppear {
+            // Show onboarding on first video load
+            if !UserDefaults.standard.bool(forKey: "onboardingCompleted") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    showOnboarding = true
+                }
+            }
+
             // Sync cached cuts from appState (if previously detected)
             if !appState.sceneCutTimestamps.isEmpty {
                 markingState.detectedCuts = appState.sceneCutTimestamps
@@ -266,6 +288,16 @@ struct ManualMarkingView: View {
         }
         .onChange(of: playerController.videoSize) { newSize in
             appState.videoSize = newSize
+        }
+        .onChange(of: appState.showCoachMarks) { show in
+            if show {
+                forceGuidedOnboarding = true
+                showOnboarding = true
+                appState.showCoachMarks = false
+            }
+        }
+        .onChange(of: showOnboarding) { showing in
+            if !showing { forceGuidedOnboarding = false }
         }
         .onChange(of: playerController.duration) { newDuration in
             if newDuration > 0 {
@@ -368,6 +400,19 @@ struct ManualMarkingView: View {
         }
     }
 
+    // MARK: - Onboarding Overlay
+
+    @ViewBuilder
+    private var onboardingOverlay: some View {
+        if showOnboarding {
+            OnboardingOverlayView(
+                highlights: onboardingHighlights,
+                isPresented: $showOnboarding,
+                forceGuided: forceGuidedOnboarding
+            )
+        }
+    }
+
     // MARK: - Marker Hint Bar
 
     private var markerHintBar: some View {
@@ -378,33 +423,36 @@ struct ManualMarkingView: View {
                     .foregroundColor(.secondary)
             }
 
-            Button(action: { handleKeyPress(.still) }) {
-                keyCap("S", glowColor: .orange)
-            }
-            .buttonStyle(.plain)
-            .onHover { hovering in
-                if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-            }
-            .help("Snap Still (S)")
+            HStack(spacing: 8) {
+                Button(action: { handleKeyPress(.still) }) {
+                    keyCap("S", glowColor: .orange)
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                }
+                .help("Snap Still (S)")
 
-            Button(action: { handleKeyPress(.inPoint) }) {
-                keyCap("I", glowColor: markingState.pendingInPoint != nil ? .orange : .green)
-            }
-            .buttonStyle(.plain)
-            .onHover { hovering in
-                if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-            }
-            .help("Mark IN point (I)")
+                Button(action: { handleKeyPress(.inPoint) }) {
+                    keyCap("I", glowColor: markingState.pendingInPoint != nil ? .orange : .green)
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                }
+                .help("Mark IN point (I)")
 
-            Button(action: { handleKeyPress(.outPoint) }) {
-                keyCap("O", glowColor: .green)
+                Button(action: { handleKeyPress(.outPoint) }) {
+                    keyCap("O", glowColor: .green)
+                }
+                .buttonStyle(.plain)
+                .disabled(markingState.pendingInPoint == nil)
+                .onHover { hovering in
+                    if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                }
+                .help("Mark OUT point (O)")
             }
-            .buttonStyle(.plain)
-            .disabled(markingState.pendingInPoint == nil)
-            .onHover { hovering in
-                if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-            }
-            .help("Mark OUT point (O)")
+            .onboardingHighlight(.manualControls)
 
             if !hasGenerated {
                 Text("on your keyboard or")
@@ -431,6 +479,7 @@ struct ManualMarkingView: View {
             .tint(.framePullAmber)
             .controlSize(.regular)
             .help("Open auto-generation panel to create markers from scene analysis")
+            .onboardingHighlight(.autoGenerate)
 
             if markingState.hasMarkedItems {
                 Button(action: { markingState.clearAll() }) {
@@ -493,6 +542,7 @@ struct ManualMarkingView: View {
                             isCutDetectionHovered = hovering
                         }
                         .help("Cut detection & snapping settings")
+                        .onboardingHighlight(.detectCuts)
                         .popover(isPresented: $showCutDetectionPopover, arrowEdge: .bottom) {
                             cutDetectionPopoverContent
                         }

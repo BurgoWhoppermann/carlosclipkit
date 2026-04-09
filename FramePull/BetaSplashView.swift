@@ -1,6 +1,8 @@
 import SwiftUI
 import AVKit
 
+// MARK: - Splash View
+
 struct SplashView: View {
     let version: String
     let build: String
@@ -34,65 +36,35 @@ struct SplashView: View {
                     .padding(.trailing, 10)
                 }
 
-                // Header
-                VStack(spacing: 6) {
+                Spacer()
+
+                // App icon + name + version
+                VStack(spacing: 10) {
                     if let icon = NSApplication.shared.applicationIconImage {
                         Image(nsImage: icon)
                             .resizable()
-                            .frame(width: 56, height: 56)
+                            .frame(width: 80, height: 80)
                     }
 
                     Text("FramePull")
-                        .font(.title2.weight(.bold))
+                        .font(.largeTitle.weight(.bold))
                         .foregroundColor(.white)
 
                     Text("v\(version)")
-                        .font(.caption)
+                        .font(.callout)
                         .foregroundColor(.framePullSilver.opacity(0.7))
-                }
-                .padding(.bottom, 20)
 
-                // Workflow cards 2×2
-                VStack(spacing: 12) {
-                    HStack(spacing: 12) {
-                        WorkflowCard(
-                            step: 1,
-                            title: "Mark Manually",
-                            subtitle: "Set stills & clip points on the timeline",
-                            imageName: "tutorial_manual",
-                            color: .framePullAmber
-                        )
-                        WorkflowCard(
-                            step: 2,
-                            title: "Detect Cuts",
-                            subtitle: "Find scene boundaries automatically",
-                            imageName: "tutorial_cuts",
-                            color: .framePullBlue
-                        )
-                    }
-                    HStack(spacing: 12) {
-                        WorkflowCard(
-                            step: 3,
-                            title: "Auto-Generate",
-                            subtitle: "Place stills & clips from detected scenes",
-                            imageName: "tutorial_autogen",
-                            color: .framePullAmber
-                        )
-                        WorkflowCard(
-                            step: 4,
-                            title: "Export",
-                            subtitle: "Save stills, GIFs & video clips",
-                            imageName: "tutorial_export",
-                            color: .framePullBlue
-                        )
-                    }
+                    Text("Extract stills, GIFs, and clips\nfrom your videos")
+                        .font(.body)
+                        .foregroundColor(.framePullSilver)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 4)
                 }
-                .padding(.horizontal, 24)
 
                 Spacer()
 
                 // Bottom section
-                VStack(spacing: 10) {
+                VStack(spacing: 12) {
                     Rectangle()
                         .fill(Color.white.opacity(0.15))
                         .frame(height: 0.5)
@@ -153,7 +125,7 @@ struct SplashView: View {
                 }
             }
         }
-        .frame(width: 480, height: 620)
+        .frame(width: 380, height: 420)
         .background(KeyDismissHandler(onDismiss: onDismiss))
     }
 
@@ -179,55 +151,6 @@ struct SplashView: View {
                 }
             }
         }
-    }
-}
-
-// MARK: - Workflow Card
-
-private struct WorkflowCard: View {
-    let step: Int
-    let title: String
-    let subtitle: String
-    let imageName: String
-    let color: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Tutorial screenshot
-            ZStack(alignment: .topLeading) {
-                Image(imageName)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(height: 80)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                // Step badge
-                Text("\(step)")
-                    .font(.caption2.weight(.bold))
-                    .foregroundColor(.white)
-                    .frame(width: 20, height: 20)
-                    .background(Circle().fill(color))
-                    .offset(x: 6, y: 6)
-            }
-
-            Text(title)
-                .font(.callout.weight(.semibold))
-                .foregroundColor(.white)
-
-            Text(subtitle)
-                .font(.caption2)
-                .foregroundColor(.framePullSilver)
-                .lineLimit(2)
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color.white.opacity(0.1), lineWidth: 0.5)
-        )
     }
 }
 

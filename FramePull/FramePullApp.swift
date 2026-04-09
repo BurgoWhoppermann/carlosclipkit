@@ -231,6 +231,11 @@ struct FramePullApp: App {
                 }
             }
             CommandGroup(replacing: .help) {
+                Button("Show Guide") {
+                    appState.showCoachMarks = true
+                }
+                .disabled(appState.videoURL == nil)
+                Divider()
                 Button("FramePull Documentation") {
                     if let url = URL(string: "https://github.com/BurgoWhoppermann/FramePull/blob/main/docs/documentation.md") {
                         NSWorkspace.shared.open(url)
@@ -356,6 +361,9 @@ class AppState: ObservableObject {
 
     // Snap clip in/out points to nearest scene cut
     @Published var snapToSceneCuts: Bool = true
+
+    // Onboarding
+    @Published var showCoachMarks: Bool = false
 
     // LUT (Look-Up Table) color correction
     @Published var selectedLUTName: String? = nil {
