@@ -89,8 +89,6 @@ class VideoProcessor {
         let startingIndex = ProcessingUtilities.findNextAvailableIndex(in: stillsDir, prefix: "\(videoName)_still", suffix: ".\(format.fileExtension)")
 
         // Extract frames at the pre-refined timestamps
-        var savedCount = 0
-
         let times = timestamps.map { CMTime(seconds: $0, preferredTimescale: 600) }
         var index = 0
 

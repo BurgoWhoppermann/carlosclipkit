@@ -27,6 +27,7 @@ struct ManualMarkingView: View {
     @State private var showError = false
     @State private var errorMessage = ""
     @State private var isDetectingScenes = false
+    @State private var currentDetectionId: UUID?
     @State private var showExportSheet = false
     @State private var showAnalysisDialog = false
     @State private var lastPressedKey: String? = nil
@@ -61,7 +62,7 @@ struct ManualMarkingView: View {
     @State private var isSearchingFaces = false
     @State private var faceSearchProgress: Double = 0
     @State private var faceSearchMessage: String = ""
-    @State private var faceStillsCount: Int = 0
+
     @State private var showFaceDetectionAlert = false
     @State private var showCutDetectionHint = false
     @State private var cachedFaceTimestamps: [Double]? = nil
@@ -297,13 +298,13 @@ struct ManualMarkingView: View {
             }
         }
         .onChange(of: playerController.videoSize) { newSize in
-            appState.videoSize = newSize
+            DispatchQueue.main.async { appState.videoSize = newSize }
         }
         .onChange(of: appState.showCoachMarks) { show in
             if show {
                 forceGuidedOnboarding = true
                 showOnboarding = true
-                appState.showCoachMarks = false
+                DispatchQueue.main.async { appState.showCoachMarks = false }
             }
         }
         .onChange(of: showOnboarding) { showing in
@@ -315,24 +316,26 @@ struct ManualMarkingView: View {
         }
         .onChange(of: playerController.duration) { newDuration in
             if newDuration > 0 {
-                appState.videoDuration = newDuration
+                DispatchQueue.main.async { appState.videoDuration = newDuration }
             }
         }
         // Live-update stills when still-only settings change
         .onChange(of: appState.stillCount) { _ in liveUpdateStills() }
         .onChange(of: appState.stillPlacement) { newPlacement in
             let sceneCount = max(1, effectiveScenes.count)
-            if newPlacement == .preferFaces {
-                // Switching TO prefer faces: default 1 face per scene
-                appState.stillCount = 1
-            } else if newPlacement == .perScene {
-                // Switching TO per-scene: divide total by scene count so total stays ~same
-                appState.stillCount = max(1, appState.stillCount / sceneCount)
-            } else if newPlacement == .spreadEvenly {
-                // Switching TO spread evenly: reset to default 10
-                appState.stillCount = 10
+            DispatchQueue.main.async {
+                if newPlacement == .preferFaces {
+                    // Switching TO prefer faces: default 1 face per scene
+                    appState.stillCount = 1
+                } else if newPlacement == .perScene {
+                    // Switching TO per-scene: divide total by scene count so total stays ~same
+                    appState.stillCount = max(1, appState.stillCount / sceneCount)
+                } else if newPlacement == .spreadEvenly {
+                    // Switching TO spread evenly: reset to default 10
+                    appState.stillCount = 10
+                }
+                liveUpdateStills()
             }
-            liveUpdateStills()
         }
         .onChange(of: appState.exportStillsEnabled) { _ in
             // Don't regenerate — just toggle visibility (markers persist)
@@ -545,6 +548,8 @@ struct ManualMarkingView: View {
 
     // MARK: - Video Player Section
 
+    // MARK: - Video Player
+
     private var videoPlayerSection: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .bottom) {
@@ -557,9 +562,29 @@ struct ManualMarkingView: View {
                 )
                 .aspectRatio(playerController.aspectRatio, contentMode: .fit)
 
-                // Overlay: cut detection top-left, filename top-right, playback controls bottom
+                // Overlay: filename top-left, close top-right, playback controls bottom
                 VStack {
                     HStack(alignment: .top) {
+                        // Filename badge
+                        HStack(spacing: 6) {
+                            Image(systemName: "film")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.framePullAmber)
+                            Text(videoURL.deletingPathExtension().lastPathComponent)
+                                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Text(".\(videoURL.pathExtension.lowercased())")
+                                .font(.system(size: 12, weight: .regular, design: .rounded))
+                                .foregroundColor(.white.opacity(0.5))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.black.opacity(0.5))
+                        .cornerRadius(8)
+                        .padding(8)
+
                         Spacer()
 
                         Button(action: {
@@ -666,6 +691,7 @@ struct ManualMarkingView: View {
                                 .padding(.horizontal, 3)
                                 .background(markingState.playbackSpeed == speed ? Color.white : Color.black.opacity(0.45))
                                 .cornerRadius(4)
+                                .contentShape(Rectangle())
                                 .help("Playback speed \(speed.displayName)")
                             }
                         }
@@ -1096,7 +1122,7 @@ struct ManualMarkingView: View {
                     }
                 }
 
-                HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
                         Text(appState.stillPlacement == .preferFaces ? "per scene" : (appState.stillPlacement == .perScene ? "per scene" : "Count"))
                             .font(.caption)
@@ -1111,19 +1137,14 @@ struct ManualMarkingView: View {
                             .help("Adjust still count")
                     }
 
-                    HStack(spacing: 6) {
-                        Text("Placement")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Picker("", selection: $appState.stillPlacement) {
-                            ForEach(StillPlacement.allCases, id: \.self) { placement in
-                                Text(placement.rawValue).tag(placement)
-                            }
+                    Picker("", selection: $appState.stillPlacement) {
+                        ForEach(StillPlacement.allCases, id: \.self) { placement in
+                            Text(placement.rawValue).tag(placement)
                         }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .help("How stills are distributed — evenly across video, per scene, or at detected faces")
                     }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .help("How stills are distributed — evenly across video, per scene, or at detected faces")
                 }
                 .disabled(!appState.exportStillsEnabled)
                 .opacity(appState.exportStillsEnabled ? 1 : 0.4)
@@ -1779,7 +1800,7 @@ struct ManualMarkingView: View {
                         markingState.addStill(at: t, isManual: false)
                     }
                 }
-                faceStillsCount = cached.count
+
                 markingState.suppressUndoCallback = false
                 markingState.undoStack.removeAll()
                 appState.appUndoStack.append(.settingsRegeneration(
@@ -1793,7 +1814,6 @@ struct ManualMarkingView: View {
             isSearchingFaces = true
             faceSearchProgress = 0
             faceSearchMessage = "Searching for faces..."
-            faceStillsCount = 0
 
             faceRefinementTask = Task {
                 let timestamps = await videoProcessor.findBestFacePerScene(
@@ -1823,7 +1843,7 @@ struct ManualMarkingView: View {
                     appState.appUndoStack.append(.settingsRegeneration(
                         previousStills: previousStills, previousClips: previousClips,
                         description: "Face still regeneration"))
-                    faceStillsCount = timestamps.count
+
                     isSearchingFaces = false
                     cachedFaceTimestamps = timestamps
                 }
@@ -1999,6 +2019,8 @@ struct ManualMarkingView: View {
     private func detectScenes() {
         // Cancel any in-progress detection
         appState.cancelSceneDetection()
+        let detectionId = UUID()
+        currentDetectionId = detectionId
         isDetectingScenes = true
         appState.isDetectingScenes = true
         appState.detectionProgress = 0
@@ -2011,6 +2033,8 @@ struct ManualMarkingView: View {
                     threshold: appState.detectionThreshold,
                     progress: { fraction in
                         Task { @MainActor in
+                            // Only update if this is still the active detection
+                            guard detectionId == currentDetectionId else { return }
                             appState.detectionProgress = fraction
                         }
                     }

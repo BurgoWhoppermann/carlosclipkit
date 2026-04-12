@@ -130,6 +130,7 @@ class LoopingPlayerController: ObservableObject {
 
     @Published var isPlaying: Bool = false
     @Published var isMuted: Bool = false
+    private var desiredRate: Float = 1.0
     @Published var volume: Float = 1.0
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
@@ -166,7 +167,7 @@ class LoopingPlayerController: ObservableObject {
         ) { [weak self] _ in
             guard let self, self.isPlaying else { return }
             self.player.seek(to: .zero)
-            self.player.play()
+            self.player.rate = self.desiredRate
         }
     }
 
@@ -223,7 +224,7 @@ class LoopingPlayerController: ObservableObject {
     }
 
     func play() {
-        player.play()
+        player.rate = desiredRate
         isPlaying = true
     }
 
@@ -336,6 +337,7 @@ class LoopingPlayerController: ObservableObject {
     }
 
     func setRate(_ rate: Float) {
+        desiredRate = rate
         player.rate = rate
         if rate > 0 {
             isPlaying = true

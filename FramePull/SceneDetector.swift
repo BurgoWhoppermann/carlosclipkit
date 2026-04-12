@@ -135,8 +135,8 @@ class SceneDetector: @unchecked Sendable {
                     previousHistogram = currentHistogram
                 }
 
-                // Report progress
-                if framesProcessed % 10 == 0 || framesProcessed == totalSamples {
+                // Report progress (skip if cancelled to avoid stale updates)
+                if !Task.isCancelled, framesProcessed % 10 == 0 || framesProcessed == totalSamples {
                     progress?(Double(framesProcessed) / Double(totalSamples))
                 }
 
