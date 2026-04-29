@@ -458,6 +458,24 @@ struct ManualMarkingView: View {
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(.white.opacity(0.75))
                     }
+
+                    Button {
+                        appState.cancelSceneDetection()
+                        isDetectingScenes = false
+                        appState.isDetectingScenes = false
+                        appState.detectionProgress = 0
+                    } label: {
+                        Text("Cancel")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill(Color.white.opacity(0.15)))
+                            .overlay(Capsule().stroke(Color.white.opacity(0.25), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Stop scene-cut detection")
+                    .padding(.top, 4)
                 }
                 .padding(.horizontal, 22)
                 .padding(.vertical, 16)
