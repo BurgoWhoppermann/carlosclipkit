@@ -289,18 +289,15 @@ struct GridBuilderView: View {
         let id = sourceID(source)
         let isInGrid = grid.selectedCells.contains(source)
         let isFull = grid.isComplete && !isInGrid
-        return Button {
-            toggleSource(source, in: grid)
-        } label: {
-            sourceCardContent(source: source, id: id, isInGrid: isInGrid, isFull: isFull)
-        }
-        .buttonStyle(.plain)
-        // NOTE: don't .disable when isFull — that blocks .onDrag too. Drag is the way to swap
-        // a populated cell for a different source, which we want to keep working at all times.
-        .onDrag {
-            NSItemProvider(object: GridDropPayload.source(source).encoded as NSString)
-        }
-        .help(helpText(for: source, isInGrid: isInGrid, isFull: isFull))
+        // Explicit gestures (not Button) so .onDrag reliably initiates for clip cards too —
+        // Button + .onDrag has known timing issues when the label contains NSViewRepresentable.
+        return sourceCardContent(source: source, id: id, isInGrid: isInGrid, isFull: isFull)
+            .contentShape(Rectangle())
+            .onTapGesture { toggleSource(source, in: grid) }
+            .onDrag {
+                NSItemProvider(object: GridDropPayload.source(source).encoded as NSString)
+            }
+            .help(helpText(for: source, isInGrid: isInGrid, isFull: isFull))
     }
 
     @ViewBuilder
