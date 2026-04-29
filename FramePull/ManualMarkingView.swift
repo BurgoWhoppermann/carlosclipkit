@@ -430,6 +430,51 @@ struct ManualMarkingView: View {
 
     // MARK: - Auto-Detect Cuts Prompt
 
+    /// Centered overlay shown while scene-cut detection is running, so the activity is visible
+    /// without having to open the cuts menu.
+    @ViewBuilder
+    private var sceneDetectionPlayerOverlay: some View {
+        if isDetectingScenes || appState.isDetectingScenes {
+            ZStack {
+                Color.black.opacity(0.35).allowsHitTesting(false)
+
+                VStack(spacing: 12) {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .controlSize(.small)
+                            .tint(.white)
+                        Text("Detecting scene cuts…")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.white)
+                    }
+
+                    if appState.detectionProgress > 0 {
+                        ProgressView(value: appState.detectionProgress)
+                            .progressViewStyle(.linear)
+                            .tint(.framePullBlue)
+                            .frame(width: 220)
+                        Text("\(Int(appState.detectionProgress * 100))%")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.75))
+                    }
+                }
+                .padding(.horizontal, 22)
+                .padding(.vertical, 16)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.black.opacity(0.7))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+            }
+            .transition(.opacity)
+            .animation(.easeInOut(duration: 0.2), value: isDetectingScenes || appState.isDetectingScenes)
+        }
+    }
+
     @ViewBuilder
     private var autoDetectPromptOverlay: some View {
         if showAutoDetectPrompt {
@@ -559,6 +604,7 @@ struct ManualMarkingView: View {
                     onClick: { playerController.togglePlayPause() }
                 )
                 .aspectRatio(playerController.aspectRatio, contentMode: .fit)
+                .overlay(sceneDetectionPlayerOverlay)
 
                 // Overlay: filename top-left, close top-right, playback controls bottom
                 VStack {
