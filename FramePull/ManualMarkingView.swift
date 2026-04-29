@@ -322,6 +322,19 @@ struct ManualMarkingView: View {
         // Live-update stills when still-only settings change
         .onChange(of: appState.stillCount) { _ in liveUpdateStills() }
         .onChange(of: appState.stillPlacement) { newPlacement in
+            // If the user switches AWAY from "Prefer faces" while the face search is still
+            // running, cancel it. The in-flight result is for a placement that's no longer
+            // selected, and findBestFacePerScene cooperates with cancellation so the heavy
+            // work actually stops (not just discarded). Completed runs are already cached
+            // via `cachedFaceTimestamps` and reused on next switch back to preferFaces.
+            if newPlacement != .preferFaces && isSearchingFaces {
+                faceRefinementTask?.cancel()
+                faceRefinementTask = nil
+                isSearchingFaces = false
+                faceSearchProgress = 0
+                faceSearchMessage = ""
+            }
+
             let sceneCount = max(1, effectiveScenes.count)
             DispatchQueue.main.async {
                 if newPlacement == .preferFaces {
