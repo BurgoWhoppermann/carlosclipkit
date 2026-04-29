@@ -372,13 +372,16 @@ class LoopingPlayerController: ObservableObject {
         }
         isSeeking = true
         let cmTime = CMTime(seconds: time, preferredTimescale: 600)
-        
-        // Use positiveInfinity for lighting fast keyframe scrubbing
-        let tolerance = CMTime.positiveInfinity
-        
+
+        // Short videos (< 5s) typically have few keyframes — keyframe-tolerant scrubbing snaps
+        // every drag to the same frame, then the "exact final seek" jumps to the precise frame,
+        // producing a visible flicker. For short clips, decode is cheap; do exact seeks throughout.
+        let useExact = duration > 0 && duration < 5.0
+        let tolerance: CMTime = useExact ? .zero : .positiveInfinity
+
         // Optimizes networking/buffering during rapid seeks
         player.currentItem?.preferredForwardBufferDuration = 1.0
-        
+
         player.seek(to: cmTime, toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] _ in
             guard let self else { return }
             
