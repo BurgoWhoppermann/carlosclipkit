@@ -44,14 +44,14 @@ final class GridExporter {
         lutCubeData: Data? = nil,
         jpegQuality: CGFloat = 0.92
     ) async throws {
-        guard !config.selectedCells.isEmpty else { throw GridExportError.emptyGrid }
+        guard config.filledCount > 0 else { throw GridExportError.emptyGrid }
         guard config.isComplete else { throw GridExportError.incompleteGrid }
 
         let canvasSize = config.ratio.outputSize()
         let asset = AVURLAsset(url: sourceVideoURL)
 
         let cellImages = try await extractStaticCellImages(
-            cells: config.selectedCells,
+            cells: config.filledCells,
             asset: asset,
             canvasSize: canvasSize,
             markedStills: markedStills,
@@ -81,7 +81,7 @@ final class GridExporter {
         lutCubeData: Data? = nil,
         progressHandler: ((Double) -> Void)? = nil
     ) async throws {
-        guard !config.selectedCells.isEmpty else { throw GridExportError.emptyGrid }
+        guard config.filledCount > 0 else { throw GridExportError.emptyGrid }
         guard config.isComplete else { throw GridExportError.incompleteGrid }
 
         let stillByID = Dictionary(uniqueKeysWithValues: markedStills.map { ($0.id, $0) })
@@ -89,7 +89,7 @@ final class GridExporter {
 
         // Resolve clip cells (sources we'll extract per-frame)
         var clipsInGrid: [(source: GridCellSource, clip: MarkedClip)] = []
-        for cell in config.selectedCells {
+        for cell in config.filledCells {
             if case .clip(let id) = cell, let clip = clipByID[id] {
                 clipsInGrid.append((cell, clip))
             }
@@ -107,7 +107,7 @@ final class GridExporter {
 
         // Pre-extract still frames once. They're reused for every output frame.
         var stillImages = try await extractStaticCellImages(
-            cells: config.selectedCells.filter { if case .still = $0 { return true } else { return false } },
+            cells: config.filledCells.filter { if case .still = $0 { return true } else { return false } },
             asset: asset,
             canvasSize: canvasSize,
             markedStills: markedStills,
@@ -286,7 +286,7 @@ final class GridExporter {
         ctx.translateBy(x: 0, y: canvasSize.height)
         ctx.scaleBy(x: 1, y: -1)
 
-        for (index, source) in config.selectedCells.enumerated() where index < config.layout.slots {
+        for (index, source) in config.indexedFilledCells {
             guard let image = cellImages[source] else { continue }
             let cellRect = config.cellRect(index: index, in: canvasSize)
             let srcSize = CGSize(width: image.width, height: image.height)

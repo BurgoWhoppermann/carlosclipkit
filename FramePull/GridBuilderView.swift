@@ -79,7 +79,7 @@ struct GridBuilderView: View {
                                     .font(.system(size: 10))
                                     .foregroundColor(.green)
                             } else {
-                                Text("\(grid.selectedCells.count)/\(grid.layout.slots)")
+                                Text("\(grid.filledCount)/\(grid.layout.slots)")
                                     .font(.system(size: 10, design: .monospaced))
                                     .foregroundColor(.secondary)
                             }
@@ -192,11 +192,8 @@ struct GridBuilderView: View {
             get: { grid.layout },
             set: { newLayout in
                 guard var g = markingState.grids.first(where: { $0.id == grid.id }) else { return }
+                // GridConfig's didSet handles resize / truncation automatically.
                 g.layout = newLayout
-                // Truncate cells if shrinking
-                if g.selectedCells.count > newLayout.slots {
-                    g.selectedCells = Array(g.selectedCells.prefix(newLayout.slots))
-                }
                 markingState.updateGrid(g)
             }
         )
@@ -287,7 +284,7 @@ struct GridBuilderView: View {
 
     private func sourceCard(source: GridCellSource, grid: GridConfig) -> some View {
         let id = sourceID(source)
-        let isInGrid = grid.selectedCells.contains(source)
+        let isInGrid = grid.contains(source)
         let isFull = grid.isComplete && !isInGrid
         // Explicit gestures (not Button) so .onDrag reliably initiates for clip cards too —
         // Button + .onDrag has known timing issues when the label contains NSViewRepresentable.
@@ -357,12 +354,11 @@ struct GridBuilderView: View {
 
     private func toggleSource(_ source: GridCellSource, in grid: GridConfig) {
         var g = grid
-        if let idx = g.selectedCells.firstIndex(of: source) {
-            g.selectedCells.remove(at: idx)
-            g.cellTransforms.removeValue(forKey: source)
-            g.cellLoopCounts.removeValue(forKey: source)
-        } else if g.selectedCells.count < g.layout.slots {
-            g.selectedCells.append(source)
+        if let idx = g.index(of: source) {
+            // Already in grid → remove (leaves an empty hole at that slot; other cells don't shift).
+            g.setCell(nil, at: idx)
+        } else if let emptyIdx = g.firstEmptyIndex {
+            g.setCell(source, at: emptyIdx)
         }
         markingState.updateGrid(g)
     }
@@ -409,7 +405,7 @@ struct GridBuilderView: View {
 
     @ViewBuilder
     private func cellView(grid: GridConfig, index: Int, size: CGSize) -> some View {
-        let source: GridCellSource? = index < grid.selectedCells.count ? grid.selectedCells[index] : nil
+        let source: GridCellSource? = grid.cell(at: index)
         if let source, let img = thumbnails[sourceID(source)] {
             FilledGridCell(
                 grid: grid,
@@ -439,7 +435,7 @@ struct GridBuilderView: View {
         ]
         // Compute looped output duration only if any cell is a clip
         let clipById = Dictionary(uniqueKeysWithValues: markingState.markedClips.map { ($0.id, $0) })
-        let weighted: [Double] = grid.selectedCells.compactMap { source in
+        let weighted: [Double] = grid.filledCells.compactMap { source in
             guard case .clip(let id) = source, let clip = clipById[id] else { return nil }
             return clip.duration * Double(grid.loopCount(for: source))
         }
@@ -632,42 +628,25 @@ private func applyGridDrop(payload: GridDropPayload, targetIndex: Int, gridID: U
 
     switch payload {
     case .cell(let from):
-        guard from != targetIndex, from < g.selectedCells.count else { return }
-        if targetIndex < g.selectedCells.count {
-            // Both filled — straight swap
-            g.selectedCells.swapAt(from, targetIndex)
-        } else {
-            // Dropped onto an empty slot — move the source to the end of the contiguous list
-            // (since selectedCells is contiguous, "the empty slot at index N" effectively maps
-            // to the next available position).
-            let item = g.selectedCells.remove(at: from)
-            g.selectedCells.append(item)
-        }
+        guard from != targetIndex,
+              g.selectedCells.indices.contains(from),
+              g.selectedCells.indices.contains(targetIndex)
+        else { return }
+        // Cells are sparse: swapping handles all four combinations correctly —
+        // filled↔filled (swap), filled↔empty (move), empty↔filled (move), empty↔empty (no-op).
+        g.swapCells(from, targetIndex)
 
     case .source(let source):
-        if let existing = g.selectedCells.firstIndex(of: source) {
-            // Source is already in the grid — move it.
+        guard g.selectedCells.indices.contains(targetIndex) else { return }
+
+        if let existing = g.index(of: source) {
+            // Already in the grid — swap positions so other cells stay put.
             if existing == targetIndex { return }
-            if targetIndex < g.selectedCells.count {
-                // Both positions filled → swap them
-                g.selectedCells.swapAt(existing, targetIndex)
-            } else {
-                // Target is past the filled range — move from existing to end
-                g.selectedCells.remove(at: existing)
-                g.selectedCells.append(source)
-            }
+            g.swapCells(existing, targetIndex)
         } else {
-            // New source — assign to target
-            if targetIndex < g.selectedCells.count {
-                // Replacing a filled slot
-                let displaced = g.selectedCells[targetIndex]
-                g.selectedCells[targetIndex] = source
-                g.cellTransforms.removeValue(forKey: displaced)
-                g.cellLoopCounts.removeValue(forKey: displaced)
-            } else if g.selectedCells.count < g.layout.slots {
-                // Empty slot drop → append (keeps cells contiguous; first available slot fills)
-                g.selectedCells.append(source)
-            }
+            // New source for this grid — place at target. If the target was filled, the
+            // displaced item is dropped; setCell cleans up its transform / loop count.
+            g.setCell(source, at: targetIndex)
         }
     }
 
@@ -824,10 +803,9 @@ private struct FilledGridCell: View {
 
             Button(role: .destructive) {
                 var g = grid
-                if let idx = g.selectedCells.firstIndex(of: source) {
-                    g.selectedCells.remove(at: idx)
-                    g.cellTransforms.removeValue(forKey: source)
-                    g.cellLoopCounts.removeValue(forKey: source)
+                if let idx = g.index(of: source) {
+                    // Empty the slot in place — other cells stay where they are.
+                    g.setCell(nil, at: idx)
                     markingState.updateGrid(g)
                 }
             } label: { Label("Remove from Grid", systemImage: "minus.circle") }

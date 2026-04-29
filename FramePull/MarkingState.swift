@@ -463,11 +463,11 @@ class MarkingState: ObservableObject {
     func autoFill(gridID: UUID) {
         guard let index = grids.firstIndex(where: { $0.id == gridID }) else { return }
         var grid = grids[index]
-        let emptySlots = grid.layout.slots - grid.selectedCells.count
-        guard emptySlots > 0 else { return }
+        let emptyIndices = grid.selectedCells.enumerated().compactMap { i, s in s == nil ? i : nil }
+        guard !emptyIndices.isEmpty else { return }
 
-        let usedSources = Set(grid.selectedCells)
-        // Pool: approved stills + approved clips, sorted by timestamp / midpoint
+        let usedSources = Set(grid.filledCells)
+        // Pool: approved stills + approved clips not already in the grid, sorted chronologically.
         struct Candidate { let source: GridCellSource; let time: Double }
         var pool: [Candidate] = []
         for still in approvedStills where !usedSources.contains(.still(still.id)) {
@@ -479,13 +479,11 @@ class MarkingState: ObservableObject {
         pool.sort { $0.time < $1.time }
         guard !pool.isEmpty else { return }
 
-        let pickCount = min(emptySlots, pool.count)
-        var picked: [GridCellSource] = []
+        let pickCount = min(emptyIndices.count, pool.count)
         for i in 0..<pickCount {
-            let idx = i * pool.count / pickCount
-            picked.append(pool[idx].source)
+            let poolIdx = i * pool.count / pickCount
+            grid.setCell(pool[poolIdx].source, at: emptyIndices[i])
         }
-        grid.selectedCells.append(contentsOf: picked)
         updateGrid(grid)
     }
 }

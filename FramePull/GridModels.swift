@@ -101,12 +101,17 @@ struct CellTransform: Equatable, Hashable {
 // MARK: - Grid config
 
 /// One grid configuration. A session may have many.
+///
+/// **Sparse cells:** `selectedCells.count` is always `layout.slots`. Empty positions are `nil`,
+/// so removing a cell at index N leaves a hole at N — other cells don't shift.
 struct GridConfig: Identifiable, Equatable {
     let id: UUID
-    var layout: GridLayout
+    var layout: GridLayout {
+        didSet { resizeCellsForLayout() }
+    }
     var ratio: OutputRatio
-    /// Cells in row-major order. Length may be < layout.slots while user is composing.
-    var selectedCells: [GridCellSource] = []
+    /// One entry per slot in row-major order. Length is always `layout.slots`. `nil` = empty.
+    private(set) var selectedCells: [GridCellSource?]
     /// Per-cell pan/zoom — keyed by source so transforms persist across reorders.
     var cellTransforms: [GridCellSource: CellTransform] = [:]
     /// Per-clip-cell loop count. Output duration = max(clip.duration × loopCount).
@@ -116,22 +121,94 @@ struct GridConfig: Identifiable, Equatable {
     init(id: UUID = UUID(),
          layout: GridLayout = .oneByThree,
          ratio: OutputRatio = .nineSixteen,
-         selectedCells: [GridCellSource] = [],
+         selectedCells: [GridCellSource?] = [],
          cellTransforms: [GridCellSource: CellTransform] = [:],
          cellLoopCounts: [GridCellSource: Int] = [:]) {
         self.id = id
         self.layout = layout
         self.ratio = ratio
-        self.selectedCells = selectedCells
+        // Pad / truncate to layout.slots so the invariant holds from construction.
+        var cells = selectedCells
+        if cells.count < layout.slots {
+            cells.append(contentsOf: Array(repeating: nil, count: layout.slots - cells.count))
+        } else if cells.count > layout.slots {
+            cells = Array(cells.prefix(layout.slots))
+        }
+        self.selectedCells = cells
         self.cellTransforms = cellTransforms
         self.cellLoopCounts = cellLoopCounts
     }
 
-    /// True when every slot has a source assigned.
-    var isComplete: Bool { selectedCells.count >= layout.slots }
+    private mutating func resizeCellsForLayout() {
+        if selectedCells.count < layout.slots {
+            selectedCells.append(contentsOf: Array(repeating: nil, count: layout.slots - selectedCells.count))
+        } else if selectedCells.count > layout.slots {
+            // Drop trailing slots when the layout shrinks.
+            let dropped = selectedCells[layout.slots...].compactMap { $0 }
+            selectedCells = Array(selectedCells.prefix(layout.slots))
+            // Forget transforms / loop counts for sources that no longer exist anywhere.
+            for source in dropped where !selectedCells.contains(source) {
+                cellTransforms.removeValue(forKey: source)
+                cellLoopCounts.removeValue(forKey: source)
+            }
+        }
+    }
 
-    /// True if any cell sources a clip (export becomes video).
-    var containsClip: Bool { selectedCells.contains(where: \.isClip) }
+    /// All non-nil cells, preserving slot order.
+    var filledCells: [GridCellSource] { selectedCells.compactMap { $0 } }
+
+    /// All filled cells with their slot index, preserving slot order.
+    var indexedFilledCells: [(index: Int, source: GridCellSource)] {
+        selectedCells.enumerated().compactMap { idx, src in src.map { (idx, $0) } }
+    }
+
+    /// Cell at slot, or nil if empty / out of bounds.
+    func cell(at index: Int) -> GridCellSource? {
+        guard selectedCells.indices.contains(index) else { return nil }
+        return selectedCells[index]
+    }
+
+    /// First empty slot index, or nil if grid is full.
+    var firstEmptyIndex: Int? { selectedCells.firstIndex(where: { $0 == nil }) }
+
+    /// Number of filled slots.
+    var filledCount: Int { filledCells.count }
+
+    /// True when every slot has a source assigned.
+    var isComplete: Bool { selectedCells.allSatisfy { $0 != nil } }
+
+    /// True if any filled cell sources a clip (export becomes video).
+    var containsClip: Bool { filledCells.contains(where: \.isClip) }
+
+    /// Place `source` at `index`. Returns the cell that was previously there (if any).
+    @discardableResult
+    mutating func setCell(_ source: GridCellSource?, at index: Int) -> GridCellSource? {
+        guard selectedCells.indices.contains(index) else { return nil }
+        let previous = selectedCells[index]
+        selectedCells[index] = source
+        // Drop transforms / loop counts for sources that no longer appear anywhere.
+        if let previous, previous != source, !selectedCells.contains(previous) {
+            cellTransforms.removeValue(forKey: previous)
+            cellLoopCounts.removeValue(forKey: previous)
+        }
+        return previous
+    }
+
+    /// Swap the contents of two slots.
+    mutating func swapCells(_ a: Int, _ b: Int) {
+        guard selectedCells.indices.contains(a), selectedCells.indices.contains(b), a != b else { return }
+        selectedCells.swapAt(a, b)
+    }
+
+    /// Find the slot index containing `source`, if any.
+    func index(of source: GridCellSource) -> Int? {
+        selectedCells.firstIndex(of: source)
+    }
+
+    /// True if `source` is currently in any slot.
+    func contains(_ source: GridCellSource) -> Bool {
+        selectedCells.contains(source)
+    }
 
     /// Cell rect for a given index inside an output canvas (zero gutter; thin gutters added at draw time if desired).
     func cellRect(index: Int, in canvas: CGSize, gutter: CGFloat = 0) -> CGRect {
