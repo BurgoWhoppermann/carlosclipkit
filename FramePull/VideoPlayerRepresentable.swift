@@ -40,7 +40,12 @@ struct VideoPlayerRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: KeyCapturePlayerView, context: Context) {
-        nsView.player = player
+        // Only reassign player when it actually changed. AVPlayerView's player setter
+        // tears down and rebuilds the presentation layer, which causes a visible flicker
+        // when this fires repeatedly during a resize drag (or 20×/s during playback).
+        if nsView.player !== player {
+            nsView.player = player
+        }
         nsView.keyPressHandler = onKeyPress
         nsView.clickHandler = onClick
         // First responder is handled by makeNSView, viewDidMoveToWindow, and mouseDown
