@@ -56,7 +56,10 @@ struct ProcessSheet: View {
                     .padding(.vertical, 10)
             }
         }
-        .frame(width: 760, height: 640)
+        // Adaptive sizing — adapts to small windows (e.g. MacBook Air) without clipping the
+        // composer. Defaults to a generous size when there's room.
+        .frame(minWidth: 720, idealWidth: 760, maxWidth: 1100,
+               minHeight: 540, idealHeight: 680, maxHeight: 900)
     }
 
     // MARK: - Content
@@ -116,12 +119,12 @@ struct ProcessSheet: View {
             .padding(.top, 4)
 
             HStack(spacing: 10) {
-                Button("Review & Select") { enter(phase: .review) }
+                Button("Review & Select") { goto(phase: .review) }
                     .buttonStyle(.borderedProminent)
                     .tint(.framePullBlue)
                     .help("Open the picker, untick anything you want to drop, then continue")
 
-                Button("Skip to Export") { enter(phase: .export) }
+                Button("Skip to Export") { goto(phase: .export) }
                     .buttonStyle(.bordered)
                     .help("Bypass review and grid creation — export everything currently marked")
             }
@@ -183,7 +186,4 @@ struct ProcessSheet: View {
         }
         activePhase = phase
     }
-
-    /// Older callers used `enter` for entry-view buttons. Same semantics now.
-    private func enter(phase: ProcessPhase) { goto(phase: phase) }
 }

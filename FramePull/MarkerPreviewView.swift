@@ -656,59 +656,31 @@ struct MarkerPreviewView: View {
         // Show the grid immediately — GIFs will appear as they finish
         await MainActor.run { loadingProgress = 1; isLoadingPreviews = false; isGeneratingGIFs = true }
 
-        // ── Phase 2: lightweight GIFs (10 fps, max 5 s) ───────────────────
+        // ── Phase 2: lightweight GIFs (10 fps, full clip duration) ──────────
+        // Each clip's encoding hops to a detached task so synchronous CGImageDestination
+        // calls don't hitch the main thread.
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("FramePullPreviews", isDirectory: true)
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
+        let url = videoURL
         for clip in markedClips.prefix(20) {
-            // If the view disappeared mid-generation, bail out before issuing more disk writes —
-            // otherwise CGImageDestination races with cleanupTempGIFs() removing the directory.
             if Task.isCancelled { break }
-
-            let clipKey  = "clip_\(clip.id)"
-            let gifURL   = tempDir.appendingPathComponent("\(clip.id).gif")
-            let maxDur   = clip.duration
-            let fps      = 10
-            let frames   = max(1, Int(maxDur * Double(fps)))
-            let interval = maxDur / Double(frames)
-            let delay    = 1.0 / Double(fps)
-
-            let gen = AVAssetImageGenerator(asset: asset)
-            gen.appliesPreferredTrackTransform = true
-            gen.maximumSize = CGSize(width: 320, height: 320)
-            gen.requestedTimeToleranceBefore = CMTime(seconds: 0.05, preferredTimescale: 600)
-            gen.requestedTimeToleranceAfter  = CMTime(seconds: 0.05, preferredTimescale: 600)
-
-            guard let dest = CGImageDestinationCreateWithURL(
-                gifURL as CFURL, UTType.gif.identifier as CFString, frames, nil
-            ) else { continue }
-
-            CGImageDestinationSetProperties(dest, [
-                kCGImagePropertyGIFDictionary as String: [kCGImagePropertyGIFLoopCount as String: 0]
-            ] as CFDictionary)
-
-            let frameProp: [String: Any] = [
-                kCGImagePropertyGIFDictionary as String: [kCGImagePropertyGIFDelayTime as String: delay],
-                kCGImageDestinationLossyCompressionQuality as String: 0.5
-            ]
-
-            var ok = true
-            let frameTimes = (0..<frames).map { f in
-                CMTime(seconds: clip.inPoint + Double(f) * interval, preferredTimescale: 600)
-            }
-
-            for await result in gen.images(for: frameTimes) {
-                switch result {
-                case .success(_, let cg, _):
-                    CGImageDestinationAddImage(dest, cg, frameProp as CFDictionary)
-                case .failure:
-                    ok = false
-                }
-            }
-
-            if ok && CGImageDestinationFinalize(dest) {
-                await MainActor.run { clipGIFURLs[clipKey] = gifURL }
+            let clipKey = "clip_\(clip.id)"
+            let result = await Task.detached(priority: .utility) { [clip, tempDir, url] in
+                await encodeLoopingGIF(
+                    sourceVideoURL: url,
+                    clipID: clip.id,
+                    inPoint: clip.inPoint,
+                    duration: clip.duration,
+                    maxDuration: .greatestFiniteMagnitude,  // no cap — preview shows full clip
+                    fps: 10,
+                    maxSize: 320,
+                    tempDir: tempDir
+                )
+            }.value
+            if let result {
+                await MainActor.run { clipGIFURLs[clipKey] = result }
             }
         }
 

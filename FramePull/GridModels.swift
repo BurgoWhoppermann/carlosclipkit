@@ -27,7 +27,7 @@ struct GridLayout: Identifiable, Equatable, Hashable {
 
 // MARK: - Output ratio
 
-/// Output canvas aspect ratio. Always renders at 1080 on the shorter side.
+/// Output canvas aspect ratio. Default render is 2160 on the shorter side (true 4K vertical).
 struct OutputRatio: Identifiable, Equatable, Hashable {
     var id: String { name }
     let name: String

@@ -96,13 +96,11 @@ struct GridBuilderView: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    .keyboardShortcut(gridSwitchShortcut(for: idx), modifiers: .command)
                 }
 
                 Button {
-                    let newID = markingState.addGrid(layout: defaultLayout(), ratio: defaultRatio())
-                    if let newIdx = markingState.grids.firstIndex(where: { $0.id == newID }) {
-                        activeIndex = newIdx
-                    }
+                    addGridAndFocus()
                 } label: {
                     Label("Add", systemImage: "plus")
                         .font(.system(size: 12, weight: .medium))
@@ -114,7 +112,8 @@ struct GridBuilderView: View {
                         )
                 }
                 .buttonStyle(.plain)
-                .help("Add another grid")
+                .keyboardShortcut("n", modifiers: .command)
+                .help("Add another grid (⌘N)")
                 .padding(.leading, 4)
             }
             .padding(.horizontal, 14)
@@ -124,6 +123,25 @@ struct GridBuilderView: View {
 
     private func defaultLayout() -> GridLayout { activeGrid?.layout ?? .oneByThree }
     private func defaultRatio()  -> OutputRatio { activeGrid?.ratio  ?? .nineSixteen }
+
+    /// Add a new grid via the toolbar / ⌘N — inherits the current grid's layout & ratio when present.
+    private func addGridAndFocus() {
+        let newID = markingState.addGrid(layout: defaultLayout(), ratio: defaultRatio())
+        if let newIdx = markingState.grids.firstIndex(where: { $0.id == newID }) {
+            activeIndex = newIdx
+        }
+    }
+
+    /// ⌘1 / ⌘2 / ⌘3 select the first three grids. Beyond that, no shortcut.
+    /// Falls back to a no-op equivalent (⌘0) — SwiftUI ignores duplicates harmlessly.
+    private func gridSwitchShortcut(for index: Int) -> KeyEquivalent {
+        switch index {
+        case 0: return "1"
+        case 1: return "2"
+        case 2: return "3"
+        default: return "0"  // unreachable shortcut keeps the API tidy
+        }
+    }
 
     // MARK: - Toolbar
 
@@ -220,7 +238,7 @@ struct GridBuilderView: View {
                 .foregroundColor(.framePullBlue.opacity(0.6))
             Text("No grids yet")
                 .font(.title3.weight(.semibold))
-            Text("Add a grid to compose stills (and, soon, clips) into social-format layouts.")
+            Text("Add a grid to compose stills and clips into social-format layouts.")
                 .font(.callout)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -500,62 +518,35 @@ struct GridBuilderView: View {
     // MARK: - Clip GIF generation (animated previews)
 
     /// Generate small looping GIFs for each approved clip so the composer can autoplay them
-    /// in the source pane and inside grid cells. Mirrors the pipeline in MarkerPreviewView.
+    /// in the source pane and inside grid cells. Each clip's encoding runs on a detached
+    /// background task so the synchronous CGImageDestination calls don't hitch the main thread.
     private func generateClipGIFsIfNeeded() async {
         let clips = markingState.approvedClips
         guard !clips.isEmpty else { return }
 
-        let asset = AVURLAsset(url: videoURL)
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("FramePullGridGIFs", isDirectory: true)
         try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
+        let url = videoURL
         for clip in clips.prefix(20) where clipGIFURLs[clip.id] == nil {
             // Bail if the composer disappeared mid-generation — otherwise CGImageDestination
             // races with cleanupClipGIFs() removing the directory.
             if Task.isCancelled { break }
-            let gifURL = tempDir.appendingPathComponent("\(clip.id).gif")
-            let maxDur = min(clip.duration, 5.0)
-            let fps = 10
-            let frames = max(1, Int(maxDur * Double(fps)))
-            let interval = maxDur / Double(frames)
-            let delay = 1.0 / Double(fps)
-
-            let gen = AVAssetImageGenerator(asset: asset)
-            gen.appliesPreferredTrackTransform = true
-            gen.maximumSize = CGSize(width: 320, height: 320)
-            gen.requestedTimeToleranceBefore = CMTime(seconds: 0.05, preferredTimescale: 600)
-            gen.requestedTimeToleranceAfter  = CMTime(seconds: 0.05, preferredTimescale: 600)
-
-            guard let dest = CGImageDestinationCreateWithURL(
-                gifURL as CFURL, UTType.gif.identifier as CFString, frames, nil
-            ) else { continue }
-
-            CGImageDestinationSetProperties(dest, [
-                kCGImagePropertyGIFDictionary as String: [kCGImagePropertyGIFLoopCount as String: 0]
-            ] as CFDictionary)
-
-            let frameProp: [String: Any] = [
-                kCGImagePropertyGIFDictionary as String: [kCGImagePropertyGIFDelayTime as String: delay],
-                kCGImageDestinationLossyCompressionQuality as String: 0.5
-            ]
-
-            var ok = true
-            let frameTimes = (0..<frames).map { f in
-                CMTime(seconds: clip.inPoint + Double(f) * interval, preferredTimescale: 600)
-            }
-
-            for await result in gen.images(for: frameTimes) {
-                switch result {
-                case .success(_, let cg, _):
-                    CGImageDestinationAddImage(dest, cg, frameProp as CFDictionary)
-                case .failure:
-                    ok = false
-                }
-            }
-
-            if ok && CGImageDestinationFinalize(dest) {
-                await MainActor.run { clipGIFURLs[clip.id] = gifURL }
+            let result = await Task.detached(priority: .utility) { [clip, tempDir, url] in
+                await encodeLoopingGIF(
+                    sourceVideoURL: url,
+                    clipID: clip.id,
+                    inPoint: clip.inPoint,
+                    duration: clip.duration,
+                    maxDuration: 5.0,
+                    fps: 10,
+                    maxSize: 320,
+                    tempDir: tempDir
+                )
+            }.value
+            if let result {
+                clipGIFURLs[clip.id] = result
             }
         }
     }
@@ -571,6 +562,64 @@ struct GridBuilderView: View {
         if case .clip(let id) = source { return clipGIFURLs[id] }
         return nil
     }
+}
+
+// MARK: - Off-main GIF encoding
+
+/// Encode a small looping GIF for a clip preview. Pure function, runs anywhere — meant to be
+/// called from a `Task.detached` so the synchronous CGImageDestination calls don't block the
+/// main thread. Returns the resulting URL on success, nil on failure.
+func encodeLoopingGIF(
+    sourceVideoURL: URL,
+    clipID: UUID,
+    inPoint: Double,
+    duration: Double,
+    maxDuration: Double,
+    fps: Int,
+    maxSize: CGFloat,
+    tempDir: URL
+) async -> URL? {
+    let gifURL = tempDir.appendingPathComponent("\(clipID).gif")
+    let maxDur = min(duration, maxDuration)
+    let frames = max(1, Int(maxDur * Double(fps)))
+    let interval = maxDur / Double(frames)
+    let delay = 1.0 / Double(fps)
+
+    let asset = AVURLAsset(url: sourceVideoURL)
+    let gen = AVAssetImageGenerator(asset: asset)
+    gen.appliesPreferredTrackTransform = true
+    gen.maximumSize = CGSize(width: maxSize, height: maxSize)
+    gen.requestedTimeToleranceBefore = CMTime(seconds: 0.05, preferredTimescale: 600)
+    gen.requestedTimeToleranceAfter = CMTime(seconds: 0.05, preferredTimescale: 600)
+
+    guard let dest = CGImageDestinationCreateWithURL(
+        gifURL as CFURL, UTType.gif.identifier as CFString, frames, nil
+    ) else { return nil }
+
+    CGImageDestinationSetProperties(dest, [
+        kCGImagePropertyGIFDictionary as String: [kCGImagePropertyGIFLoopCount as String: 0]
+    ] as CFDictionary)
+
+    let frameProp: [String: Any] = [
+        kCGImagePropertyGIFDictionary as String: [kCGImagePropertyGIFDelayTime as String: delay],
+        kCGImageDestinationLossyCompressionQuality as String: 0.5
+    ]
+
+    var ok = true
+    let frameTimes = (0..<frames).map { f in
+        CMTime(seconds: inPoint + Double(f) * interval, preferredTimescale: 600)
+    }
+
+    for await result in gen.images(for: frameTimes) {
+        switch result {
+        case .success(_, let cg, _):
+            CGImageDestinationAddImage(dest, cg, frameProp as CFDictionary)
+        case .failure:
+            ok = false
+        }
+    }
+
+    return (ok && CGImageDestinationFinalize(dest)) ? gifURL : nil
 }
 
 // MARK: - Drag-and-drop payload protocol
