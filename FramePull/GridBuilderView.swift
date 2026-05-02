@@ -387,7 +387,13 @@ struct GridBuilderView: View {
 
     private func previewPane(grid: GridConfig) -> some View {
         GeometryReader { geo in
-            let canvasArea = CGSize(width: max(1, geo.size.width - 48), height: max(1, geo.size.height - 48))
+            // Inset is 24pt minimum (small windows), capped at 5% of the smaller dimension —
+            // so on a fullscreen display the canvas keeps growing instead of being eaten by padding.
+            let inset = max(24, min(geo.size.width, geo.size.height) * 0.05)
+            let canvasArea = CGSize(
+                width: max(1, geo.size.width - inset * 2),
+                height: max(1, geo.size.height - inset * 2)
+            )
             let canvasSize = sizeFitting(grid.ratio, in: canvasArea)
             let cellSize = CGSize(
                 width: canvasSize.width / CGFloat(grid.layout.cols),
