@@ -21,6 +21,8 @@ struct ExportSettingsView: View {
     @State private var exportProgress: Double = 0
     @State private var exportStatusMessage = ""
     @State private var showPreviewSelect = false
+    /// Reference to the in-flight export Task so the Cancel button can call `.cancel()`.
+    @State private var exportTask: Task<Void, Never>? = nil
 
     /// When set via "Preview & Select" in legacy (non-embedded) mode, only these items are exported.
     /// In embedded mode, selection is read directly from `appState.markingState`.
@@ -418,38 +420,48 @@ struct ExportSettingsView: View {
             }
 
             HStack(spacing: 12) {
-                if !embedded {
-                    Button(action: { showPreviewSelect = true }) {
-                        Label("Preview & Select", systemImage: "checklist")
+                if isExporting {
+                    Button(role: .destructive, action: { cancelExport() }) {
+                        Text("Cancel")
                             .font(.headline)
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.framePullAmber)
+                    .buttonStyle(.bordered)
                     .controlSize(.large)
-                    .disabled(isExporting)
-                    .help("Preview items, select which to export, and adjust crop positions")
-                }
-
-                Button(action: { startExport() }) {
-                    HStack(spacing: 6) {
-                        if appState.saveURL == nil {
-                            Image(systemName: "folder.badge.plus")
-                                .font(.system(size: 13, weight: .semibold))
+                    .help("Stop the export. Already-written files are kept; the in-progress grid file is cleaned up.")
+                } else {
+                    if !embedded {
+                        Button(action: { showPreviewSelect = true }) {
+                            Label("Preview & Select", systemImage: "checklist")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
                         }
-                        Text(appState.saveURL == nil ? "Choose Folder & Export" : "Export")
-                            .font(.headline)
+                        .buttonStyle(.borderedProminent)
+                        .tint(.framePullAmber)
+                        .controlSize(.large)
+                        .help("Preview items, select which to export, and adjust crop positions")
                     }
-                    .frame(maxWidth: .infinity)
+
+                    Button(action: { startExport() }) {
+                        HStack(spacing: 6) {
+                            if appState.saveURL == nil {
+                                Image(systemName: "folder.badge.plus")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            Text(appState.saveURL == nil ? "Choose Folder & Export" : "Export")
+                                .font(.headline)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.framePullBlue)
+                    .controlSize(.large)
+                    // Note: don't disable on saveURL==nil — clicking will open the folder picker.
+                    .disabled(!appState.hasSelectedExportType || (displayStillCount + displayClipCount + displayGridCount) == 0)
+                    .help(appState.saveURL == nil
+                          ? "Pick an output folder, then export all marked items"
+                          : "Export all marked stills and clips to the selected folder")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.framePullBlue)
-                .controlSize(.large)
-                // Note: don't disable on saveURL==nil — clicking will open the folder picker.
-                .disabled(isExporting || !appState.hasSelectedExportType || (displayStillCount + displayClipCount + displayGridCount) == 0)
-                .help(appState.saveURL == nil
-                      ? "Pick an output folder, then export all marked items"
-                      : "Export all marked stills and clips to the selected folder")
             }
 
             Text("Files are always added — never overwritten")
@@ -546,7 +558,7 @@ struct ExportSettingsView: View {
         exportProgress = 0
         exportStatusMessage = "Starting export..."
 
-        Task {
+        exportTask = Task {
             // Activate security-scoped access for the chosen folder. Required when the URL
             // came from a persisted bookmark, and important for iCloud Drive paths where
             // even a fresh NSOpenPanel grant doesn't always cover ImageIO's atomic-write
@@ -559,16 +571,31 @@ struct ExportSettingsView: View {
 
                 await MainActor.run {
                     isExporting = false
+                    exportTask = nil
                     dismiss()
                     onExportComplete()
+                }
+            } catch is CancellationError {
+                // User-initiated cancel — silent dismissal of the in-progress state.
+                await MainActor.run {
+                    isExporting = false
+                    exportProgress = 0
+                    exportStatusMessage = ""
+                    exportTask = nil
                 }
             } catch {
                 await MainActor.run {
                     isExporting = false
+                    exportTask = nil
                     onExportError(error.localizedDescription)
                 }
             }
         }
+    }
+
+    private func cancelExport() {
+        exportTask?.cancel()
+        exportStatusMessage = "Cancelling…"
     }
 
     // MARK: - Manual Export
@@ -588,6 +615,7 @@ struct ExportSettingsView: View {
 
         // Export stills
         if stillsCount > 0 {
+            try Task.checkCancellation()
             let timestamps = stills.map { $0.timestamp }
             let reframeOffsets = stills.map { $0.reframeOffset }
             await MainActor.run {
@@ -619,6 +647,7 @@ struct ExportSettingsView: View {
         // Export clips (as both video AND GIF) — only when moving clips enabled
         if appState.exportMovingClipsEnabled {
             for (index, clip) in clips.enumerated() {
+                try Task.checkCancellation()
                 await MainActor.run {
                     exportStatusMessage = "Exporting clip \(index + 1) of \(clips.count)..."
                 }
@@ -660,6 +689,7 @@ struct ExportSettingsView: View {
             let allMarkedClips = appState.markingState.markedClips
 
             for (gridIndex, grid) in exportableGrids.enumerated() {
+                try Task.checkCancellation()
                 await MainActor.run {
                     exportStatusMessage = "Exporting grid \(gridIndex + 1) of \(exportableGrids.count)..."
                 }

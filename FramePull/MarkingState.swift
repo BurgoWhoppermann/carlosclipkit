@@ -152,8 +152,33 @@ class MarkingState: ObservableObject {
     /// When true, onUndoActionRecorded callback is suppressed (used during bulk regeneration)
     var suppressUndoCallback: Bool = false
 
-    /// Record an undo action and notify the parent
+    /// Last `.modifiedGrid` recording timestamp, keyed by grid id. Used for undo coalescing so
+    /// continuous pan/zoom drags don't flood the unified undo stack and push out marker history.
+    private var lastGridUndoTime: [UUID: TimeInterval] = [:]
+    private let gridUndoCoalesceWindow: TimeInterval = 0.6
+
+    /// Record an undo action and notify the parent.
+    ///
+    /// Special case for `.modifiedGrid`: if the topmost entry on the stack is a `.modifiedGrid`
+    /// for the same grid id and was recorded within the coalesce window, the new mutation is
+    /// folded into the existing entry (we keep the OLDER `previous` so undo still rewinds to
+    /// the start of the gesture). This collapses dozens of pan/zoom commits into one undoable
+    /// step instead of pushing marker history out of the 50-step cap.
     private func recordUndo(_ action: UndoAction) {
+        if case .modifiedGrid(let id, _) = action,
+           let last = undoStack.last,
+           case .modifiedGrid(let lastID, _) = last,
+           lastID == id,
+           let lastTime = lastGridUndoTime[id],
+           Date().timeIntervalSinceReferenceDate - lastTime < gridUndoCoalesceWindow {
+            // Coalesce: the existing top entry already holds the older `previous`. Keep it.
+            // Bump the timestamp so a long continuous gesture stays coalesced.
+            lastGridUndoTime[id] = Date().timeIntervalSinceReferenceDate
+            return
+        }
+        if case .modifiedGrid(let id, _) = action {
+            lastGridUndoTime[id] = Date().timeIntervalSinceReferenceDate
+        }
         undoStack.append(action)
         if !suppressUndoCallback {
             onUndoActionRecorded?(action)
@@ -248,6 +273,8 @@ class MarkingState: ObservableObject {
             recordUndo(.removedStill(still))
         }
         markedStills.removeAll { $0.id == id }
+        // Drop any grid cells that referenced this still so exports don't ship black holes.
+        sweepGridsRemoving(.still(id))
     }
 
     /// Snap a time to the nearest scene cut if within threshold
@@ -293,6 +320,7 @@ class MarkingState: ObservableObject {
             recordUndo(.removedClip(clip))
         }
         markedClips.removeAll { $0.id == id }
+        sweepGridsRemoving(.clip(id))
     }
 
     /// Remove a clip's out-point, reverting the in-point to pendingInPoint
@@ -301,6 +329,7 @@ class MarkingState: ObservableObject {
         recordUndo(.removedClip(clip))
         markedClips.removeAll { $0.id == id }
         pendingInPoint = clip.inPoint
+        sweepGridsRemoving(.clip(id))
     }
 
     /// Clear all marks
@@ -308,19 +337,27 @@ class MarkingState: ObservableObject {
         if hasMarkedItems {
             recordUndo(.clearedAll(stills: markedStills, clips: markedClips))
         }
+        let stillIDs = markedStills.map(\.id)
+        let clipIDs = markedClips.map(\.id)
         markedStills.removeAll()
         markedClips.removeAll()
         pendingInPoint = nil
+        for id in stillIDs { sweepGridsRemoving(.still(id)) }
+        for id in clipIDs  { sweepGridsRemoving(.clip(id)) }
     }
 
     /// Clear only stills (for auto-regeneration without touching clips)
     func clearStills() {
+        let ids = markedStills.map(\.id)
         markedStills.removeAll()
+        for id in ids { sweepGridsRemoving(.still(id)) }
     }
 
     /// Clear only clips (for auto-regeneration without touching stills)
     func clearClips() {
+        let ids = markedClips.map(\.id)
         markedClips.removeAll()
+        for id in ids { sweepGridsRemoving(.clip(id)) }
     }
 
     /// Check if there's anything to export
@@ -371,12 +408,31 @@ class MarkingState: ObservableObject {
 
     /// Clear only auto-generated stills (preserves manual ones)
     func clearAutoStills() {
+        let removedIDs = markedStills.filter { !$0.isManual }.map(\.id)
         markedStills.removeAll { !$0.isManual }
+        for id in removedIDs { sweepGridsRemoving(.still(id)) }
     }
 
     /// Clear only auto-generated clips (preserves manual ones)
     func clearAutoClips() {
+        let removedIDs = markedClips.filter { !$0.isManual }.map(\.id)
         markedClips.removeAll { !$0.isManual }
+        for id in removedIDs { sweepGridsRemoving(.clip(id)) }
+    }
+
+    /// Remove a source from every grid it appears in. Called whenever the underlying still/clip
+    /// is deleted, so grids don't ship orphan black holes at export time. Doesn't record undo —
+    /// undoing the marker deletion will not restore the grid cell, the user re-attaches manually.
+    private func sweepGridsRemoving(_ source: GridCellSource) {
+        for i in grids.indices {
+            var g = grids[i]
+            var changed = false
+            for slotIdx in g.selectedCells.indices where g.selectedCells[slotIdx] == source {
+                g.setCell(nil, at: slotIdx)
+                changed = true
+            }
+            if changed { grids[i] = g }
+        }
     }
 
     // MARK: - Reframe Offset

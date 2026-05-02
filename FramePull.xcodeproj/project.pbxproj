@@ -16,22 +16,22 @@
 		A1000031 /* MarkingState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000032 /* MarkingState.swift */; };
 		A1000033 /* VideoPlayerRepresentable.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000034 /* VideoPlayerRepresentable.swift */; };
 		A1000035 /* ManualMarkingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000036 /* ManualMarkingView.swift */; };
-		A1SPLASH02 /* BetaSplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1SPLASH01 /* BetaSplashView.swift */; };
 		A1000037 /* ExportSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000038 /* ExportSettingsView.swift */; };
 		A1000050 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A1000051 /* PrivacyInfo.xcprivacy */; };
-		A1PROCUTIL02 /* ProcessingUtilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1PROCUTIL01 /* ProcessingUtilities.swift */; };
-		A1VID0T02 /* VideoTutorial1.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = A1VID0T01 /* VideoTutorial1.mp4 */; };
+		A1GRIDBLD02 /* GridBuilderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1GRIDBLD01 /* GridBuilderView.swift */; };
+		A1GRIDEXP02 /* GridExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1GRIDEXP01 /* GridExporter.swift */; };
+		A1GRIDMOD02 /* GridModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1GRIDMOD01 /* GridModels.swift */; };
+		A1KBSHORT02 /* KeyboardShortcutsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1KBSHORT01 /* KeyboardShortcutsView.swift */; };
 		A1LUT002 /* LUTProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1LUT001 /* LUTProcessor.swift */; };
 		A1LUTF02 /* LUTs in Resources */ = {isa = PBXBuildFile; fileRef = A1LUTF01 /* LUTs */; };
 		A1ONBOARD02 /* OnboardingOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1ONBOARD01 /* OnboardingOverlay.swift */; };
-		A1TIMELINE02 /* ManualTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1TIMELINE01 /* ManualTimelineView.swift */; };
 		A1PREVIEW02 /* MarkerPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1PREVIEW01 /* MarkerPreviewView.swift */; };
-		A1KBSHORT02 /* KeyboardShortcutsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1KBSHORT01 /* KeyboardShortcutsView.swift */; };
-		A1PROCSHEET02 /* ProcessSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1PROCSHEET01 /* ProcessSheet.swift */; };
 		A1PROCHEAD02 /* ProcessTimelineHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1PROCHEAD01 /* ProcessTimelineHeader.swift */; };
-		A1GRIDMOD02 /* GridModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1GRIDMOD01 /* GridModels.swift */; };
-		A1GRIDEXP02 /* GridExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1GRIDEXP01 /* GridExporter.swift */; };
-		A1GRIDBLD02 /* GridBuilderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1GRIDBLD01 /* GridBuilderView.swift */; };
+		A1PROCSHEET02 /* ProcessSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1PROCSHEET01 /* ProcessSheet.swift */; };
+		A1PROCUTIL02 /* ProcessingUtilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1PROCUTIL01 /* ProcessingUtilities.swift */; };
+		A1SPLASH02 /* BetaSplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1SPLASH01 /* BetaSplashView.swift */; };
+		A1TIMELINE02 /* ManualTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1TIMELINE01 /* ManualTimelineView.swift */; };
+		A1VID0T02 /* VideoTutorial1.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = A1VID0T01 /* VideoTutorial1.mp4 */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -46,22 +46,22 @@
 		A1000032 /* MarkingState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkingState.swift; sourceTree = "<group>"; };
 		A1000034 /* VideoPlayerRepresentable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPlayerRepresentable.swift; sourceTree = "<group>"; };
 		A1000036 /* ManualMarkingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualMarkingView.swift; sourceTree = "<group>"; };
-		A1SPLASH01 /* BetaSplashView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetaSplashView.swift; sourceTree = "<group>"; };
 		A1000038 /* ExportSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportSettingsView.swift; sourceTree = "<group>"; };
 		A1000051 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		A1PROCUTIL01 /* ProcessingUtilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingUtilities.swift; sourceTree = "<group>"; };
-		A1VID0T01 /* VideoTutorial1.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = VideoTutorial1.mp4; sourceTree = "<group>"; };
+		A1GRIDBLD01 /* GridBuilderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridBuilderView.swift; sourceTree = "<group>"; };
+		A1GRIDEXP01 /* GridExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridExporter.swift; sourceTree = "<group>"; };
+		A1GRIDMOD01 /* GridModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridModels.swift; sourceTree = "<group>"; };
+		A1KBSHORT01 /* KeyboardShortcutsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcutsView.swift; sourceTree = "<group>"; };
 		A1LUT001 /* LUTProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LUTProcessor.swift; sourceTree = "<group>"; };
 		A1LUTF01 /* LUTs */ = {isa = PBXFileReference; lastKnownFileType = folder; path = LUTs; sourceTree = "<group>"; };
 		A1ONBOARD01 /* OnboardingOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingOverlay.swift; sourceTree = "<group>"; };
-		A1TIMELINE01 /* ManualTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualTimelineView.swift; sourceTree = "<group>"; };
 		A1PREVIEW01 /* MarkerPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkerPreviewView.swift; sourceTree = "<group>"; };
-		A1KBSHORT01 /* KeyboardShortcutsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcutsView.swift; sourceTree = "<group>"; };
-		A1PROCSHEET01 /* ProcessSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessSheet.swift; sourceTree = "<group>"; };
 		A1PROCHEAD01 /* ProcessTimelineHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessTimelineHeader.swift; sourceTree = "<group>"; };
-		A1GRIDMOD01 /* GridModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridModels.swift; sourceTree = "<group>"; };
-		A1GRIDEXP01 /* GridExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridExporter.swift; sourceTree = "<group>"; };
-		A1GRIDBLD01 /* GridBuilderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridBuilderView.swift; sourceTree = "<group>"; };
+		A1PROCSHEET01 /* ProcessSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessSheet.swift; sourceTree = "<group>"; };
+		A1PROCUTIL01 /* ProcessingUtilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingUtilities.swift; sourceTree = "<group>"; };
+		A1SPLASH01 /* BetaSplashView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetaSplashView.swift; sourceTree = "<group>"; };
+		A1TIMELINE01 /* ManualTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualTimelineView.swift; sourceTree = "<group>"; };
+		A1VID0T01 /* VideoTutorial1.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = VideoTutorial1.mp4; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -400,7 +400,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = de.carlooppermann.clipkit;
 				PRODUCT_NAME = FramePull;
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -444,7 +444,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = de.carlooppermann.clipkit;
 				PRODUCT_NAME = FramePull;
 				SWIFT_EMIT_LOC_STRINGS = YES;

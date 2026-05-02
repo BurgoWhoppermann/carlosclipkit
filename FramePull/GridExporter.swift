@@ -178,12 +178,25 @@ final class GridExporter {
         }
         writer.startSession(atSourceTime: .zero)
 
+        // Defer covers every error path (cancellation, frame extraction failure, append failure)
+        // so we never leak a half-written file or an in-flight writer session.
+        var didFinishCleanly = false
+        defer {
+            if !didFinishCleanly && writer.status == .writing {
+                writer.cancelWriting()
+                try? FileManager.default.removeItem(at: outputURL)
+            }
+        }
+
         let lutFilter = makeLUTFilter(dimension: lutCubeDimension, data: lutCubeData)
         let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
         let totalFrames = max(1, Int((maxDuration * Double(frameRate)).rounded()))
 
         for frame in 0..<totalFrames {
+            // Honor cancellation between frames so the user can abort a long render.
+            try Task.checkCancellation()
+
             let outputTime = Double(frame) / Double(frameRate)
             var frameImages = stillImages
 
@@ -191,40 +204,33 @@ final class GridExporter {
                 // Loop the clip to fill the longest cell's duration
                 let tInClip = clip.inPoint + outputTime.truncatingRemainder(dividingBy: clip.duration)
                 let cmt = CMTime(seconds: tInClip, preferredTimescale: 600)
-                do {
-                    let cg = try await clipGenerators[source]!.image(at: cmt).image
-                    if let lutFilter {
-                        frameImages[source] = bake(lut: lutFilter, ciContext: ciContext, cg: cg) ?? cg
-                    } else {
-                        frameImages[source] = cg
-                    }
-                } catch {
-                    writer.cancelWriting()
-                    throw GridExportError.frameExtractionFailed(time: tInClip)
+                let cg = try await clipGenerators[source]!.image(at: cmt).image
+                if let lutFilter {
+                    frameImages[source] = bake(lut: lutFilter, ciContext: ciContext, cg: cg) ?? cg
+                } else {
+                    frameImages[source] = cg
                 }
             }
 
             // Pull a buffer from the adaptor's pool, draw the composite into it
             guard let pool = adaptor.pixelBufferPool else {
-                writer.cancelWriting()
                 throw GridExportError.writerFailed("pixel buffer pool unavailable")
             }
             var pb: CVPixelBuffer?
             let status = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pb)
             guard status == kCVReturnSuccess, let buffer = pb else {
-                writer.cancelWriting()
                 throw GridExportError.canvasRenderFailed
             }
 
             drawComposite(into: buffer, config: config, canvasSize: canvasSize, cellImages: frameImages)
 
-            // Wait for the writer to be ready
+            // Wait for the writer to be ready — propagate cancellation by NOT swallowing the throw.
             while !writerInput.isReadyForMoreMediaData {
-                try? await Task.sleep(nanoseconds: 2_000_000)
+                try Task.checkCancellation()
+                try await Task.sleep(nanoseconds: 2_000_000)
             }
             let pres = CMTime(value: Int64(frame), timescale: frameRate)
             if !adaptor.append(buffer, withPresentationTime: pres) {
-                writer.cancelWriting()
                 throw GridExportError.writerFailed(writer.error?.localizedDescription ?? "append failed")
             }
 
@@ -236,6 +242,7 @@ final class GridExporter {
         if writer.status != .completed {
             throw GridExportError.writerFailed(writer.error?.localizedDescription ?? "finishWriting failed")
         }
+        didFinishCleanly = true
     }
 
     // MARK: - Composition (shared)
