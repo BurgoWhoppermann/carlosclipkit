@@ -332,8 +332,10 @@ struct GridBuilderView: View {
                     RoundedRectangle(cornerRadius: 4).fill(Color.gray.opacity(0.18))
                 }
             }
-            .frame(height: 80)
-            .frame(maxWidth: .infinity)
+            // Single .frame call locks both axes; .clipped() enforces the bounds at the layout
+            // level (clipShape only clips drawing, not layout overflow from .aspectRatio(.fill)).
+            .frame(maxWidth: .infinity, minHeight: 80, maxHeight: 80)
+            .clipped()
             .clipShape(RoundedRectangle(cornerRadius: 4))
             .overlay(
                 RoundedRectangle(cornerRadius: 4)

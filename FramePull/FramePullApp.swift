@@ -211,7 +211,10 @@ struct FramePullApp: App {
                 .handlesExternalEvents(preferring: Set(["main"]), allowing: Set(["main"]))
         }
         .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
+        // .contentSize locks the window to its content's intrinsic size — user can't drag-resize.
+        // .contentMinSize honours the content's minimum but lets the user resize freely beyond it,
+        // including entering green-button fullscreen.
+        .windowResizability(.contentMinSize)
         .defaultSize(width: 1280, height: 900)
         .commands {
             CommandGroup(replacing: .newItem) {
