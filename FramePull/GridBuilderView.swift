@@ -182,7 +182,18 @@ struct GridBuilderView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(grid.isComplete || approvedSources.isEmpty)
-                .help("Distribute approved items across empty slots in chronological order")
+                .help("Distribute approved items across empty slots — re-rolls each click")
+
+                Button {
+                    var g = grid
+                    g.clearCells()
+                    markingState.updateGrid(g)
+                } label: {
+                    Label("Clear", systemImage: "arrow.counterclockwise")
+                }
+                .buttonStyle(.bordered)
+                .disabled(grid.filledCount == 0)
+                .help("Empty every cell in this grid (layout and ratio stay)")
 
                 Spacer()
 

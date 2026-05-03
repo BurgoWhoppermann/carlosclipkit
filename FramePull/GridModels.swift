@@ -200,6 +200,14 @@ struct GridConfig: Identifiable, Equatable {
         selectedCells.swapAt(a, b)
     }
 
+    /// Empty every slot. Layout / ratio / loop counts stay; per-cell transforms are cleared
+    /// since their sources are no longer referenced.
+    mutating func clearCells() {
+        selectedCells = Array(repeating: nil, count: layout.slots)
+        cellTransforms.removeAll()
+        cellLoopCounts.removeAll()
+    }
+
     /// Find the slot index containing `source`, if any.
     func index(of source: GridCellSource) -> Int? {
         selectedCells.firstIndex(of: source)

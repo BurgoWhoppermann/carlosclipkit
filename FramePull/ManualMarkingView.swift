@@ -59,6 +59,9 @@ struct ManualMarkingView: View {
     @State private var faceRefinementTask: Task<Void, Never>? = nil
     @State private var hasGenerated = false
     @State private var generateButtonGlow = false
+    /// Drives the breathing amber accent on the Process button so it gently catches the eye
+    /// once there's something to process. Toggled in `.onAppear` with a repeating animation.
+    @State private var processPulse = false
     @State private var isSearchingFaces = false
     @State private var faceSearchProgress: Double = 0
     @State private var faceSearchMessage: String = ""
@@ -129,33 +132,46 @@ struct ManualMarkingView: View {
     }
 
     private var bottomExportBar: some View {
-        VStack(spacing: 0) {
+        let canProcess = markingState.hasMarkedItems
+        return VStack(spacing: 0) {
             Divider()
             HStack(spacing: 8) {
                 Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"))")
                     .font(.system(size: 9))
                     .foregroundColor(.secondary.opacity(0.6))
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button {
                     showProcessSheet = true
                 } label: {
-                    Label {
-                        Text("Process")
-                            .font(.system(size: 14, weight: .semibold))
-                    } icon: {
+                    HStack(spacing: 6) {
                         Image(systemName: "wand.and.stars")
                             .font(.system(size: 13, weight: .semibold))
+                            // Icon picks up an amber glow that gently breathes when there's
+                            // something to process — subtle nudge toward the primary CTA.
+                            .foregroundStyle(.white)
+                            .shadow(color: canProcess
+                                    ? Color.framePullAmber.opacity(processPulse ? 0.85 : 0.0)
+                                    : .clear,
+                                    radius: processPulse ? 6 : 2)
+                        Text("Process")
+                            .font(.system(size: 13, weight: .semibold))
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 2)
+                    .padding(.horizontal, 4)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.framePullBlue)
-                .controlSize(.large)
-                .frame(maxWidth: .infinity)
-                .disabled(!markingState.hasMarkedItems)
+                .controlSize(.regular)
+                .disabled(!canProcess)
                 .help("Review, build grids, and export your marked items")
                 .onboardingHighlight(.exportSettings)
+                .onAppear {
+                    withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
+                        processPulse = true
+                    }
+                }
+
+                Spacer()
 
                 Button(action: { showShortcuts = true }) {
                     Image(systemName: "keyboard")
