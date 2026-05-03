@@ -102,6 +102,30 @@ struct ManualMarkingView: View {
             .coordinateSpace(name: "onboarding")
             .overlay(onboardingOverlay)
             .overlay(autoDetectPromptOverlay)
+            .overlay(processOverlay)
+    }
+
+    /// The Process workflow renders as a full-window overlay (not a sheet), so it grows with
+    /// the host window and supports fullscreen. Z-stacks above the marking content.
+    @ViewBuilder
+    private var processOverlay: some View {
+        if showProcessSheet {
+            ProcessSheet(
+                videoURL: videoURL,
+                onDismiss: { showProcessSheet = false },
+                onExportComplete: {
+                    showProcessSheet = false
+                    showExportComplete = true
+                },
+                onExportError: { message in
+                    showProcessSheet = false
+                    errorMessage = message
+                    showError = true
+                }
+            )
+            .environmentObject(appState)
+            .transition(.opacity)
+        }
     }
 
     private var bottomExportBar: some View {
@@ -410,19 +434,8 @@ struct ManualMarkingView: View {
         } message: {
             Text("All marked items have been exported successfully.")
         }
-        .sheet(isPresented: $showProcessSheet) {
-            ProcessSheet(
-                videoURL: videoURL,
-                onExportComplete: {
-                    showExportComplete = true
-                },
-                onExportError: { message in
-                    errorMessage = message
-                    showError = true
-                }
-            )
-            .environmentObject(appState)
-        }
+        // Process workflow no longer presented as a .sheet — see processOverlay above for the
+        // full-window overlay implementation that grows with the host window.
         .sheet(isPresented: $showShortcuts) {
             KeyboardShortcutsView()
         }
