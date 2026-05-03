@@ -35,13 +35,15 @@ struct GridBuilderView: View {
             if grids.isEmpty {
                 emptyState
             } else if let grid = activeGrid {
-                HStack(spacing: 0) {
+                // HSplitView is the AppKit-backed splitter — drag handle, native feel,
+                // and `autosaveName` persists the divider position across launches.
+                HSplitView {
                     sourcePane(grid: grid)
-                        .frame(width: 220)
-                    Divider()
+                        .frame(minWidth: 220, idealWidth: 280, maxWidth: 480)
                     previewPane(grid: grid)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+                .background(SplitViewAutosave(name: "GridBuilderSplit"))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -277,7 +279,7 @@ struct GridBuilderView: View {
             .padding(.top, 10)
 
             ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 86, maximum: 100), spacing: 6)], spacing: 6) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 110, maximum: 160), spacing: 8)], spacing: 8) {
                     ForEach(approvedSources, id: \.self) { source in
                         sourceCard(source: source, grid: grid)
                     }
@@ -317,27 +319,34 @@ struct GridBuilderView: View {
 
     @ViewBuilder
     private func sourceCardContent(source: GridCellSource, id: UUID, isInGrid: Bool, isFull: Bool) -> some View {
+        // Layout anchor: a plain Rectangle with the cell's frame. Unlike Image+aspectRatio(.fill),
+        // a Rectangle has NO intrinsic size preference, so it doesn't propagate a width up to
+        // LazyVGrid based on the source image's aspect (which made some selected cells render
+        // wider than others when their thumbnail aspects differed). The image is drawn as an
+        // overlay on top, clipped to the rounded rect.
         ZStack(alignment: .topTrailing) {
-            Group {
-                if let gifURL = clipGIFURL(for: source) {
-                    // PassthroughImageView ensures clicks/drags reach the parent Button.
-                    AnimatedGIFView(url: gifURL)
-                } else if let img = thumbnails[id] {
-                    Image(nsImage: img)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } else {
-                    RoundedRectangle(cornerRadius: 4).fill(Color.gray.opacity(0.18))
+            Rectangle()
+                .fill(Color.black)
+                .frame(maxWidth: .infinity, minHeight: 80, maxHeight: 80)
+                .overlay {
+                    if let gifURL = clipGIFURL(for: source) {
+                        AnimatedGIFView(url: gifURL)
+                    } else if let img = thumbnails[id] {
+                        Image(nsImage: img)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        Color.gray.opacity(0.18)
+                    }
                 }
-            }
-            .frame(height: 56)
-            .frame(maxWidth: .infinity)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(isInGrid ? Color.framePullAmber : .clear, lineWidth: 2)
-            )
-            .opacity(isFull ? 0.35 : 1)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .overlay(
+                    // .strokeBorder strokes entirely inside the path so the selection ring stays
+                    // within the cell — no bleed into neighbours.
+                    RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(isInGrid ? Color.framePullAmber : .clear, lineWidth: 2)
+                )
+                .opacity(isFull ? 0.35 : 1)
 
             if isInGrid {
                 Image(systemName: "checkmark.circle.fill")
@@ -362,6 +371,7 @@ struct GridBuilderView: View {
                 .padding(3)
             }
         }
+        .frame(maxWidth: .infinity, minHeight: 80, maxHeight: 80)
     }
 
     private func helpText(for source: GridCellSource, isInGrid: Bool, isFull: Bool) -> String {
@@ -385,7 +395,13 @@ struct GridBuilderView: View {
 
     private func previewPane(grid: GridConfig) -> some View {
         GeometryReader { geo in
-            let canvasArea = CGSize(width: max(1, geo.size.width - 48), height: max(1, geo.size.height - 48))
+            // Inset is 24pt minimum (small windows), capped at 5% of the smaller dimension —
+            // so on a fullscreen display the canvas keeps growing instead of being eaten by padding.
+            let inset = max(24, min(geo.size.width, geo.size.height) * 0.05)
+            let canvasArea = CGSize(
+                width: max(1, geo.size.width - inset * 2),
+                height: max(1, geo.size.height - inset * 2)
+            )
             let canvasSize = sizeFitting(grid.ratio, in: canvasArea)
             let cellSize = CGSize(
                 width: canvasSize.width / CGFloat(grid.layout.cols),
@@ -496,7 +512,9 @@ struct GridBuilderView: View {
         let asset = AVURLAsset(url: videoURL)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 480, height: 480)
+        // 1080 short side: looks crisp in the preview canvas at any window size, while keeping
+        // memory bounded (~5MB per RGBA frame at 1920×1080 worst case).
+        generator.maximumSize = CGSize(width: 1080, height: 1080)
 
         let entries: [(UUID, CMTime)] =
             stills.map { ($0.id, CMTime(seconds: $0.timestamp, preferredTimescale: 600)) } +
@@ -541,7 +559,7 @@ struct GridBuilderView: View {
                     duration: clip.duration,
                     maxDuration: 5.0,
                     fps: 10,
-                    maxSize: 320,
+                    maxSize: 720,
                     tempDir: tempDir
                 )
             }.value
@@ -562,6 +580,32 @@ struct GridBuilderView: View {
         if case .clip(let id) = source { return clipGIFURLs[id] }
         return nil
     }
+}
+
+// MARK: - Split view autosave
+
+/// Persists the `HSplitView` divider position across app launches.
+///
+/// `HSplitView` doesn't expose `autosaveName` in SwiftUI — but it's just a wrapper around
+/// `NSSplitView`. This zero-size NSViewRepresentable embeds itself behind the split view,
+/// walks up the AppKit hierarchy to find the enclosing NSSplitView, and sets its
+/// `autosaveName`. AppKit handles persistence to UserDefaults automatically after that.
+private struct SplitViewAutosave: NSViewRepresentable {
+    let name: String
+
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        DispatchQueue.main.async { [weak v] in
+            guard let v else { return }
+            // Walk up until we hit the enclosing NSSplitView.
+            var node: NSView? = v
+            while let n = node, !(n is NSSplitView) { node = n.superview }
+            (node as? NSSplitView)?.autosaveName = NSSplitView.AutosaveName(name)
+        }
+        return v
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 // MARK: - Off-main GIF encoding
@@ -1010,7 +1054,7 @@ private struct GridCellPreview: View {
             } else {
                 Image(nsImage: image)
                     .resizable()
-                    .interpolation(.medium)
+                    .interpolation(.high)
                     .frame(width: drawRect.width, height: drawRect.height)
                     .position(x: drawRect.midX, y: drawRect.midY)
                     .allowsHitTesting(false)

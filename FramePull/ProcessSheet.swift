@@ -1,14 +1,18 @@
 import SwiftUI
 
-/// Host sheet that visualises the post-marking workflow as a 3-phase timeline:
+/// Host view that visualises the post-marking workflow as a 3-phase timeline:
 /// Review & Select → Create Grids → Export. Users enter at any phase and flow forward.
+///
+/// Rendered as a full-window overlay (NOT a `.sheet`) so the workflow grows with the host
+/// window and supports macOS green-button fullscreen. Dismissal flows back via the
+/// `onDismiss` closure.
 struct ProcessSheet: View {
     let videoURL: URL
+    var onDismiss: () -> Void
     var onExportComplete: () -> Void
     var onExportError: (String) -> Void
 
     @EnvironmentObject var appState: AppState
-    @Environment(\.dismiss) private var dismiss
 
     /// `nil` until the user picks an entry phase. Free navigation after that — pills are bidirectional.
     @State private var activePhase: ProcessPhase? = nil
@@ -30,7 +34,7 @@ struct ProcessSheet: View {
                     onTap: { phase in goto(phase: phase) }
                 )
                 Spacer(minLength: 0)
-                Button { dismiss() } label: {
+                Button { onDismiss() } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.title3)
                         .foregroundColor(.secondary)
@@ -56,10 +60,10 @@ struct ProcessSheet: View {
                     .padding(.vertical, 10)
             }
         }
-        // Adaptive sizing — adapts to small windows (e.g. MacBook Air) without clipping the
-        // composer. Defaults to a generous size when there's room.
-        .frame(minWidth: 720, idealWidth: 760, maxWidth: 1100,
-               minHeight: 540, idealHeight: 680, maxHeight: 900)
+        // Fill the host window. ContentView's frame(minWidth: 800, minHeight: 600) provides
+        // the floor; macOS green-button fullscreen lets this view scale up to the entire screen.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     // MARK: - Content
@@ -150,7 +154,7 @@ struct ProcessSheet: View {
     @ViewBuilder
     private var footer: some View {
         HStack {
-            Button("Cancel") { dismiss() }
+            Button("Cancel") { onDismiss() }
                 .buttonStyle(.bordered)
 
             Spacer()

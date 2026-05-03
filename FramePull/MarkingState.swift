@@ -515,31 +515,49 @@ class MarkingState: ObservableObject {
     }
 
     /// Auto-fill a grid from the approved item pool, distributing evenly across the timeline.
-    /// Skips items already in the grid. Mutates the grid in-place via `updateGrid`.
+    /// Each click re-rolls: items are chosen randomly within chronological "buckets" so the
+    /// timeline coverage stays even but the specific picks change. Items used in OTHER grids
+    /// are excluded by default; if that empties the pool, fall back to allowing reuse from
+    /// other grids (still excludes items already in THIS grid).
     func autoFill(gridID: UUID) {
         guard let index = grids.firstIndex(where: { $0.id == gridID }) else { return }
         var grid = grids[index]
         let emptyIndices = grid.selectedCells.enumerated().compactMap { i, s in s == nil ? i : nil }
         guard !emptyIndices.isEmpty else { return }
 
-        let usedSources = Set(grid.filledCells)
-        // Pool: approved stills + approved clips not already in the grid, sorted chronologically.
-        struct Candidate { let source: GridCellSource; let time: Double }
-        var pool: [Candidate] = []
-        for still in approvedStills where !usedSources.contains(.still(still.id)) {
-            pool.append(Candidate(source: .still(still.id), time: still.timestamp))
+        // Build the pool with the strictest exclusion first: nothing already in any grid.
+        let usedAcrossAllGrids = Set(grids.flatMap { $0.filledCells })
+        var pool = candidatePool(excluding: usedAcrossAllGrids)
+
+        // If exclusion across grids leaves nothing usable, relax to "not in THIS grid only".
+        if pool.count < emptyIndices.count {
+            let usedInThisGrid = Set(grid.filledCells)
+            pool = candidatePool(excluding: usedInThisGrid)
         }
-        for clip in approvedClips where !usedSources.contains(.clip(clip.id)) {
-            pool.append(Candidate(source: .clip(clip.id), time: clip.inPoint + clip.duration / 2))
-        }
-        pool.sort { $0.time < $1.time }
         guard !pool.isEmpty else { return }
 
+        // Sort chronologically, then bucket the timeline into N slots and pick a random item
+        // from each bucket. Re-clicking re-rolls because the random pick changes.
+        pool.sort { $0.time < $1.time }
         let pickCount = min(emptyIndices.count, pool.count)
         for i in 0..<pickCount {
-            let poolIdx = i * pool.count / pickCount
-            grid.setCell(pool[poolIdx].source, at: emptyIndices[i])
+            let bucketStart = i * pool.count / pickCount
+            let bucketEnd = max(bucketStart + 1, (i + 1) * pool.count / pickCount)
+            let chosen = (bucketStart..<bucketEnd).randomElement() ?? bucketStart
+            grid.setCell(pool[chosen].source, at: emptyIndices[i])
         }
         updateGrid(grid)
+    }
+
+    /// Build the candidate pool of approved items, excluding any source in `usedSources`.
+    private func candidatePool(excluding usedSources: Set<GridCellSource>) -> [(source: GridCellSource, time: Double)] {
+        var pool: [(source: GridCellSource, time: Double)] = []
+        for still in approvedStills where !usedSources.contains(.still(still.id)) {
+            pool.append((.still(still.id), still.timestamp))
+        }
+        for clip in approvedClips where !usedSources.contains(.clip(clip.id)) {
+            pool.append((.clip(clip.id), clip.inPoint + clip.duration / 2))
+        }
+        return pool
     }
 }

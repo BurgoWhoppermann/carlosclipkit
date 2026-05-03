@@ -2,6 +2,21 @@ import SwiftUI
 import AVFoundation
 import UniformTypeIdentifiers
 
+// MARK: - Thumbnail size class
+
+/// Thumbnail size class for the Review & Select grid. User-selectable via a S/M/L picker
+/// in the header; preference persists in UserDefaults. Aspect is fixed at 16:9 — height
+/// is always derived from the column width, so the layout reflows cleanly.
+enum PreviewThumbSize: String, CaseIterable, Identifiable {
+    case small, medium, large
+    var id: String { rawValue }
+    var minWidth: CGFloat { switch self { case .small: 140; case .medium: 200; case .large: 280 } }
+    var maxWidth: CGFloat { switch self { case .small: 170; case .medium: 240; case .large: 340 } }
+    var spacing: CGFloat { switch self { case .small: 8;  case .medium: 10;  case .large: 12 } }
+    var label: String   { switch self { case .small: "S"; case .medium: "M"; case .large: "L" } }
+    var aspect: CGFloat { 16.0 / 9.0 }
+}
+
 // MARK: - Marker Preview View
 /// Shows a thumbnail grid of all marked stills and clips before export.
 /// Stills show static thumbnails; clips render as looping animated GIFs (temp files, cleaned up on dismiss).
@@ -50,9 +65,19 @@ struct MarkerPreviewView: View {
     @State private var selectedStillIDs: Set<UUID> = []
     @State private var selectedClipIDs: Set<UUID> = []
 
-    private let thumbWidth: CGFloat = 160
-    private let thumbHeight: CGFloat = 90
-    private let columns = [GridItem(.adaptive(minimum: 160, maximum: 180), spacing: 10)]
+    /// User-selectable thumbnail size class — persists via @AppStorage so the choice survives launches.
+    @AppStorage("reviewThumbSize") private var thumbSize: PreviewThumbSize = .medium
+
+    /// Adaptive grid columns derived from `thumbSize`.
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: thumbSize.minWidth, maximum: thumbSize.maxWidth),
+                  spacing: thumbSize.spacing)]
+    }
+
+    /// Cell height: fixed-aspect 16:9 derived from the *minimum* column width so cells don't
+    /// jitter as columns reflow at the boundary. Cells render at this height; the SwiftUI
+    /// LazyVGrid handles horizontal expansion to fill the column.
+    private var thumbHeight: CGFloat { thumbSize.minWidth / thumbSize.aspect }
 
     /// Flat ordered list: stills first, then clips. Indices used by the lightbox.
     private var allItems: [(key: String, caption: String)] {
@@ -125,9 +150,21 @@ struct MarkerPreviewView: View {
         ZStack {
             VStack(alignment: .leading, spacing: 12) {
                 // Header — always visible
-                HStack {
+                HStack(spacing: 12) {
                     Text(selectMode ? "Select & Export" : "Preview & Reframe").font(.headline)
                     Spacer()
+                    if !isLoadingPreviews && (markedStills.count + markedClips.count) > 0 {
+                        // S/M/L picker — choice persists via @AppStorage("reviewThumbSize").
+                        Picker("Size", selection: $thumbSize) {
+                            ForEach(PreviewThumbSize.allCases) { size in
+                                Text(size.label).tag(size)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 96)
+                        .help("Thumbnail size")
+                    }
                     if selectMode {
                         Button(allSelected ? "Deselect All" : "Select All") {
                             setAllSelected(!allSelected)
@@ -177,12 +214,12 @@ struct MarkerPreviewView: View {
                                                     Image(nsImage: img)
                                                         .resizable()
                                                         .aspectRatio(contentMode: .fit)
-                                                        .frame(width: thumbWidth, height: thumbHeight)
+                                                        .frame(maxWidth: .infinity).frame(height: thumbHeight)
                                                         .cornerRadius(6)
                                                 } else {
                                                     RoundedRectangle(cornerRadius: 6)
                                                         .fill(Color.gray.opacity(0.15))
-                                                        .frame(width: thumbWidth, height: thumbHeight)
+                                                        .frame(maxWidth: .infinity).frame(height: thumbHeight)
                                                 }
                                                 Text(still.formattedTime)
                                                     .font(.system(size: 10, design: .monospaced))
@@ -235,14 +272,14 @@ struct MarkerPreviewView: View {
                                                 ZStack(alignment: .center) {
                                                     if let gifURL = clipGIFURLs[clipKey] {
                                                         AnimatedGIFView(url: gifURL)
-                                                            .frame(width: thumbWidth, height: thumbHeight)
+                                                            .frame(maxWidth: .infinity).frame(height: thumbHeight)
                                                             .clipped()
                                                             .cornerRadius(6)
                                                     } else if let img = thumbnails[clipKey] {
                                                         Image(nsImage: img)
                                                             .resizable()
                                                             .aspectRatio(contentMode: .fit)
-                                                            .frame(width: thumbWidth, height: thumbHeight)
+                                                            .frame(maxWidth: .infinity).frame(height: thumbHeight)
                                                             .cornerRadius(6)
                                                     }
                                                     // GIF generation spinner
@@ -257,7 +294,7 @@ struct MarkerPreviewView: View {
                                                             }
                                                             Spacer()
                                                         }
-                                                        .frame(width: thumbWidth, height: thumbHeight)
+                                                        .frame(maxWidth: .infinity).frame(height: thumbHeight)
                                                     }
                                                     // Duration badge
                                                     VStack {
@@ -274,7 +311,7 @@ struct MarkerPreviewView: View {
                                                                 .padding(4)
                                                         }
                                                     }
-                                                    .frame(width: thumbWidth, height: thumbHeight)
+                                                    .frame(maxWidth: .infinity).frame(height: thumbHeight)
                                                 }
                                                 Text("\(clip.formattedInPoint) – \(clip.formattedOutPoint)")
                                                     .font(.system(size: 10, design: .monospaced))
