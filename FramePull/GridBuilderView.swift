@@ -319,6 +319,9 @@ struct GridBuilderView: View {
 
     @ViewBuilder
     private func sourceCardContent(source: GridCellSource, id: UUID, isInGrid: Bool, isFull: Bool) -> some View {
+        // Outer frame locks every cell to its column width × 80pt so .aspectRatio(.fill) on the
+        // inner image can't propagate an intrinsic width up to LazyVGrid (which caused selected
+        // cards to render slightly larger than their column and visually overlap their neighbours).
         ZStack(alignment: .topTrailing) {
             Group {
                 if let gifURL = clipGIFURL(for: source) {
@@ -332,14 +335,15 @@ struct GridBuilderView: View {
                     RoundedRectangle(cornerRadius: 4).fill(Color.gray.opacity(0.18))
                 }
             }
-            // Single .frame call locks both axes; .clipped() enforces the bounds at the layout
-            // level (clipShape only clips drawing, not layout overflow from .aspectRatio(.fill)).
             .frame(maxWidth: .infinity, minHeight: 80, maxHeight: 80)
             .clipped()
             .clipShape(RoundedRectangle(cornerRadius: 4))
             .overlay(
+                // .strokeBorder strokes ENTIRELY inside the path (vs .stroke which straddles).
+                // Combined with the outer .frame(maxWidth: .infinity), selection borders no
+                // longer extend past cell bounds into adjacent cards.
                 RoundedRectangle(cornerRadius: 4)
-                    .stroke(isInGrid ? Color.framePullAmber : .clear, lineWidth: 2)
+                    .strokeBorder(isInGrid ? Color.framePullAmber : .clear, lineWidth: 2)
             )
             .opacity(isFull ? 0.35 : 1)
 
@@ -366,6 +370,7 @@ struct GridBuilderView: View {
                 .padding(3)
             }
         }
+        .frame(maxWidth: .infinity, minHeight: 80, maxHeight: 80)
     }
 
     private func helpText(for source: GridCellSource, isInGrid: Bool, isFull: Bool) -> String {
@@ -506,7 +511,9 @@ struct GridBuilderView: View {
         let asset = AVURLAsset(url: videoURL)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 480, height: 480)
+        // 1080 short side: looks crisp in the preview canvas at any window size, while keeping
+        // memory bounded (~5MB per RGBA frame at 1920×1080 worst case).
+        generator.maximumSize = CGSize(width: 1080, height: 1080)
 
         let entries: [(UUID, CMTime)] =
             stills.map { ($0.id, CMTime(seconds: $0.timestamp, preferredTimescale: 600)) } +
@@ -551,7 +558,7 @@ struct GridBuilderView: View {
                     duration: clip.duration,
                     maxDuration: 5.0,
                     fps: 10,
-                    maxSize: 320,
+                    maxSize: 720,
                     tempDir: tempDir
                 )
             }.value
@@ -1046,7 +1053,7 @@ private struct GridCellPreview: View {
             } else {
                 Image(nsImage: image)
                     .resizable()
-                    .interpolation(.medium)
+                    .interpolation(.high)
                     .frame(width: drawRect.width, height: drawRect.height)
                     .position(x: drawRect.midX, y: drawRect.midY)
                     .allowsHitTesting(false)

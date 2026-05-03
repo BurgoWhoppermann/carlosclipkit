@@ -136,12 +136,22 @@ struct ManualMarkingView: View {
                     .font(.system(size: 9))
                     .foregroundColor(.secondary.opacity(0.6))
 
-                Button("Process...") {
+                Button {
                     showProcessSheet = true
+                } label: {
+                    Label {
+                        Text("Process")
+                            .font(.system(size: 14, weight: .semibold))
+                    } icon: {
+                        Image(systemName: "wand.and.stars")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 2)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.framePullBlue)
-                .controlSize(.regular)
+                .controlSize(.large)
                 .frame(maxWidth: .infinity)
                 .disabled(!markingState.hasMarkedItems)
                 .help("Review, build grids, and export your marked items")
