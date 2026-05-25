@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-FramePull is a native macOS SwiftUI application that extracts still frames, animated GIFs, and video clips from source videos using intelligent scene detection. Zero external dependencies — only Apple frameworks (AVFoundation, Vision, CoreImage, ImageIO, AppKit, Combine).
+FramePull is a native macOS SwiftUI application that extracts still frames, animated GIFs, video clips, and **social-format grids** from source videos using intelligent scene detection. Zero external dependencies — only Apple frameworks (AVFoundation, Vision, CoreImage, ImageIO, AppKit, Combine).
 
 User documentation lives in [`docs/documentation.md`](docs/documentation.md).
 
@@ -29,63 +29,129 @@ xcodebuild -scheme FramePull -configuration Debug -derivedDataPath ./build && op
 
 There are no tests, linting, or CI/CD configured.
 
+**Versioning:** `MARKETING_VERSION` in `project.pbxproj`. The build number is auto-incremented on Archive by the `Auto Build Number` script which reads/writes the root-level `.buildnum` file. Don't hand-edit `CURRENT_PROJECT_VERSION` — only bump `MARKETING_VERSION` when shipping a new train.
+
 ## Architecture
 
 ### App Entry & State
 
-- **`FramePullApp.swift`** — App entry point. Defines `AppState` (central `ObservableObject`), all export enums (`OutputFormat`, `GIFResolution`, `StillFormat`, `StillSize`, `ClipQuality`, `StillPlacement`), brand colors, and the menu bar commands.
+- **`FramePullApp.swift`** — App entry point. Defines `AppState` (central `ObservableObject`), all export enums (`OutputFormat`, `GIFResolution`, `StillFormat`, `StillSize`, `ClipQuality`, `StillPlacement`), brand colors, and the menu bar commands. WindowGroup uses `.windowResizability(.contentMinSize)` and `defaultSize(1280, 900)`.
 - **`AppState`** — Holds video URL, export settings, scene detection results, LUT state, and a `MarkingState` child object. Owns the unified app-level undo stack.
 
 ### Views
 
 | File | Role |
-|------|------|
+|---|---|
 | `ContentView.swift` | Drop zone / import screen. Shown until a video is loaded, then replaced by `ManualMarkingView`. |
-| `ManualMarkingView.swift` | **Main UI.** Video player, timeline, marker controls, inline auto-generate panel, stills/clips list, export trigger. Also contains `ManualTimelineView`, `MarkerPreviewView`, `KeyboardShortcutsView`, and `AnimatedGIFView`. |
-| `ExportSettingsView.swift` | Sheet for configuring and running exports (format, quality, crop variants, output folder). |
-| `BetaSplashView.swift` | Launch splash / What's New screen (`SplashView`). Plays `VideoTutorial1.mp4` from the app bundle. |
+| `ManualMarkingView.swift` | **Main UI.** Video player, timeline, marker controls, inline auto-generate panel, stills/clips list, bottom Process button. |
+| `ManualTimelineView.swift` | Timeline view (visible-time-window model, see below). Renders cuts, stills, clips, playhead, pending IN / OUT markers, scroll thumb. |
+| `MarkerPreviewView.swift` | Thumbnail grid with S/M/L size picker, lightbox, reframe slider. Used both as a legacy modal and embedded inside `ProcessSheet` (with `useApprovalState: true`). |
+| `ProcessSheet.swift` | Three-phase host: Review & Select → Create Grids → Export. Free navigation between phases via `ProcessTimelineHeader`. |
+| `ProcessTimelineHeader.swift` | The clickable 3-pill timeline at the top of `ProcessSheet`. |
+| `GridBuilderView.swift` | Grid composer. `HSplitView` (source pane / preview canvas), draggable splitter, autosaved divider, S/M/L source thumbnails. |
+| `GridCellPreview` / `FilledGridCell` / `EmptyGridCell` (inside `GridBuilderView`) | Per-cell pan / pinch / scroll-wheel zoom, Move pill, Loop pill, drop targets. |
+| `ExportSettingsView.swift` | Embedded inside `ProcessSheet` (with `embedded: true`) — scrollable form + pinned action bar with Cancel-during-export support. |
+| `BetaSplashView.swift` | Launch splash / What's New screen. |
+| `KeyboardShortcutsView.swift` | In-app shortcut reference. |
+| `OnboardingOverlay.swift` | First-launch coach marks. |
 
 ### Processing Pipeline
 
 | Processor | Output | Notes |
-|-----------|--------|-------|
+|---|---|---|
 | `VideoProcessor.swift` | Still images (JPEG/PNG/TIFF) | Face detection (Vision), blur rejection, per-still `reframeOffset` for 4:5/9:16 crops |
 | `VideoSnippetProcessor.swift` | MP4 clips **and** animated GIFs | Handles both via `exportClipAndGIF()`; per-clip `reframeOffset` for crop positioning |
+| `GridExporter.swift` | **Image grids** (JPEG) and **video grids** (H.264 MP4) | Shared `drawComposite` routine; per-frame compositor for video; pixel-buffer pool from `AVAssetWriterInputPixelBufferAdaptor`; cooperative cancellation throughout |
 | `ProcessingUtilities.swift` | Shared helpers | `cropImageToAspectRatio(horizontalOffset:)`, `resizeImage`, `findNextAvailableIndex`, `ensureSubdirectory` |
 | `LUTProcessor.swift` | `.cube` LUT loading | Parses cube files, builds `CIFilter` for real-time preview and export baking |
-| `SceneDetector.swift` | Scene cut timestamps | Bhattacharyya distance on 8×8×8 RGB histograms; async with downsampled frames |
+| `SceneDetector.swift` | Scene cut timestamps | Bhattacharyya distance on 8×8×8 RGB histograms. **Frame-precise**: samples at the source's `nominalFrameRate` with zero seek tolerance, records cuts using the decoder's `actualTime`. |
 
-### Marking State
+### State models
 
-**`MarkingState.swift`** — ObservableObject owned by `AppState`. Tracks:
-- `markedStills: [MarkedStill]` — each with `timestamp`, `isManual`, `reframeOffset`
-- `markedClips: [MarkedClip]` — each with `inPoint`, `outPoint`, `isManual`, `reframeOffset`
-- `pendingInPoint` — waiting for the user to set an OUT point
-- `detectedCuts` — scene cut timestamps used for snap-to-cut
-- 50-step undo stack (`UndoAction` enum)
+**`MarkingState.swift`** — central `ObservableObject` owned by `AppState`. Tracks:
+
+- `markedStills: [MarkedStill]` — `timestamp`, `isManual`, `reframeOffset`, `isApproved`
+- `markedClips: [MarkedClip]` — `inPoint`, `outPoint`, `isManual`, `reframeOffset`, `isApproved`
+- `grids: [GridConfig]` — user-built grids (any count)
+- `pendingInPoint` + `pendingOutPoint` — bidirectional clip marking (I→O or O→I both close a clip)
+- `detectedCuts` — scene cut timestamps
+- `sourceFrameRate` — populated from `videoTrack.nominalFrameRate`; drives `frameDuration` for all snap/auto-generate offsets and the 50-step undo stack's coalescing window
+- `approvedStills` / `approvedClips` — convenience computed filters used by the grid composer + downstream export
+- `completedGrids` — grids whose `selectedCells` is fully filled
+- 50-step undo stack with grid-modification coalescing (consecutive `.modifiedGrid` entries within 600 ms collapse into a single undo step so pan/zoom drags don't flood out marker history)
+
+**`GridModels.swift`** — pure value types:
+
+- `GridLayout` — `1×1`, `1×2`, `2×1`, `1×3`, `3×1`, `2×2`, `2×3`, `3×2`
+- `OutputRatio` — `1:1`, `4:5`, `9:16`, `16:9`. Default render is **2160 on the shorter side** (true 4K vertical for 9:16)
+- `GridCellSource` — `.still(UUID)` / `.clip(UUID)`, ID-based so transforms survive cell reorders
+- `CellTransform` — normalized pan (offsetX/Y in [-1, 1]) and scale (1.0–4.0). Single source of truth via `drawRect(srcSize:cellRect:)` — preview and export call the same function
+- `GridConfig` — **sparse cells**: `selectedCells: [GridCellSource?]` is always length `layout.slots`. Empty positions are `nil`, so removing a cell at index N leaves a hole at N and other cells don't shift. `setCell`, `swapCells`, `clearCells`, `firstEmptyIndex`, `filledCells`, `indexedFilledCells` are the mutation API
 
 ### Video Player
 
-**`VideoPlayerRepresentable.swift`** — `NSViewRepresentable` wrapping `AVPlayer` via a `LoopingPlayerController`. Features: looping, LUT composition via `AVMutableVideoComposition`, keyboard event forwarding, time observation, clip loop range, volume control, frame-step.
+**`VideoPlayerRepresentable.swift`** — `NSViewRepresentable` wrapping `AVPlayer` via a `LoopingPlayerController`. Features: looping, LUT composition via `AVMutableVideoComposition`, keyboard event forwarding, time observation, clip loop range, volume control, frame-step, **`@Published sourceFrameRate`** loaded from `videoTrack.nominalFrameRate`. `updateNSView` guards `nsView.player = player` with an identity check to avoid re-instantiating the AVPlayerView's presentation layer on every render (otherwise produces flicker during resize / 20Hz playback ticks).
+
+## The Process workflow
+
+`ProcessSheet` is the entry point after marking is complete. The bottom **"Process"** button in `ManualMarkingView` opens it. Three phases:
+
+1. **Review & Select** — `MarkerPreviewView` with `useApprovalState: true`. Toggles `MarkedStill.isApproved` / `MarkedClip.isApproved` directly on the model. S/M/L thumbnail size persists via `@AppStorage("reviewThumbSize")`.
+2. **Create Grids** — `GridBuilderView`. Adds / deletes grids (any count), drag-and-drop assign and swap, per-cell pan / pinch / scroll-wheel zoom + slider, loop counts for clip cells, ⌘N / ⌘1 / ⌘2 / ⌘3 shortcuts.
+3. **Export** — `ExportSettingsView` with `embedded: true`. Summary shows `📷 N stills · 🎬 N clips · ⊞ N grids`. Pinned action bar at the bottom with Cancel-during-export.
+
+`ProcessTimelineHeader` pills are bidirectional — any phase can be clicked at any time. `scrollTime` recentres on zoom changes, page-scrolls when the playhead exits the visible window, etc. (see `ManualTimelineView`).
+
+## Timeline rendering model
+
+`ManualTimelineView` uses a **visible-time-window** model — the timeline always renders at viewport width; zoom shrinks the visible time range, not the rendered content. Implementation details in the file header. Key state:
+
+- `@State scrollTime: Double` — time displayed at the LEFT edge of the viewport
+- `visibleDuration = duration / zoomLevel`
+- `xPosition(for:width:)` maps time → viewport x via `(time − scrollTime) / visibleDuration × width`
+- `timeForX(_:width:)` is the inverse, used by every drag gesture (clip handles, still drag, background scrub)
+- Auto-scroll is **page-style** — only triggers when the playhead exits the visible window
+- Zoom anchors on the playhead's screen-fraction position (no jumpy snap-back)
+- Scroll thumb at the bottom drags `scrollTime` directly (true pan, not a seek). Click-on-track jumps thumb center to the cursor; click-on-thumb preserves the grab offset
+- Horizontal mouse-wheel scroll panning via an `NSEvent.addLocalMonitorForEvents` monitor + a `TimelineScrollBox` reference holder for fresh-state access from the monitor closure
+
+## Snap / auto-generation rules
+
+Frame-based (no hardcoded ms or fps assumptions):
+
+- **Snap threshold**: 3 source frames either side of a detected cut. Beyond that, the marker lands wherever the cursor / playhead is.
+- **IN point**: lands exactly on the cut (no offset).
+- **OUT point**: cut − 1 source frame so the cut frame itself doesn't end up in the exported clip.
+- All offsets derive from `markingState.frameDuration = 1 / sourceFrameRate`.
+- Auto-generated clips (`regenerateClips`, `fillTimelineGaps`) follow the same rule: IN at scene start, OUT at scene end − 1 frame.
+
+## Bidirectional clip marking
+
+- `I` then `O` (forward): the original flow. `setInPoint` stores `pendingInPoint`; `setOutPoint` completes the clip if `pendingInPoint < currentTime`.
+- `O` then `I` (reverse): hit `O` first → `pendingOutPoint` is stored. Hit `I` at an earlier time → clip `[I, pendingOut]` is closed.
+- Mismatched ordering (e.g. I at a time after a pending OUT) clears the stale pending and starts fresh.
+- `cancelPendingInPoint()` (Esc) clears both.
 
 ## Key Data Flow
 
 ```
-Drop video → AppState.videoURL set → ContentView → ManualMarkingView
-                                                         │
-                            ┌──── SceneDetector (async) ─┤
-                            │                            │
-                            ▼                            ▼
-                    markingState.detectedCuts    video player loads
-                            │
-                    Auto-generate or manual S/I/O keystrokes
-                            │
-                    markingState.markedStills / markedClips
-                            │
-                    ExportSettingsView → VideoProcessor / VideoSnippetProcessor
-                                                         │
-                                              /stills, /gifs, /videos
-                                           (+ /4x5 and /9x16 subdirs)
+Drop video
+  → AppState.videoURL set
+  → ContentView replaced by ManualMarkingView
+  → LoopingPlayerController loads .nominalFrameRate → MarkingState.sourceFrameRate
+  → SceneDetector (frame-precise, async) → markingState.detectedCuts
+
+Marking phase (manual S/I/O keys, drag handles, or Auto-Generate panel)
+  → markingState.markedStills / markedClips
+  → Each MarkedStill / MarkedClip carries isApproved (default true)
+
+Click "Process" → ProcessSheet
+  ├── Review & Select   — toggles isApproved per item
+  ├── Create Grids      — builds markingState.grids (any count, sparse cells)
+  └── Export            — ExportSettingsView (embedded)
+        ↓
+   /stills/, /gifs/, /videos/ via VideoProcessor / VideoSnippetProcessor
+   /grids/  via GridExporter (image: JPEG; video: H.264 MP4 with frame-by-frame compositor)
 ```
 
 ## Export Output Structure
@@ -100,21 +166,39 @@ Drop video → AppState.videoURL set → ContentView → ManualMarkingView
 │   ├── videoname_clip_001.gif
 │   ├── 4x5/videoname_clip_001.gif
 │   └── 9x16/videoname_clip_001.gif
-└── videos/
-    ├── videoname_clip_001.mp4
-    ├── 4x5/videoname_clip_001.mp4
-    └── 9x16/videoname_clip_001.mp4
+├── videos/
+│   ├── videoname_clip_001.mp4
+│   ├── 4x5/videoname_clip_001.mp4
+│   └── 9x16/videoname_clip_001.mp4
+└── grids/
+    ├── videoname_grid_001.jpg   (all-still grid)
+    ├── videoname_grid_002.mp4   (any clip → MP4 via frame-by-frame compositor)
+    └── ...
 ```
 
-Sequential numbering (`_001`, `_002` …) prevents overwrites.
+Mixed `.jpg` and `.mp4` grids share one numbering sequence (`nextGridIndex` checks both extensions).
 
 ## Per-Item Reframe Offset
 
-Each `MarkedStill` and `MarkedClip` stores a `reframeOffset: CGFloat` (0.0 = far left, 0.5 = center, 1.0 = far right). This controls the horizontal crop position when exporting 4:5 or 9:16 variants. Set via the drag gesture or slider in `MarkerPreviewView`.
+Each `MarkedStill` and `MarkedClip` stores a `reframeOffset: CGFloat` (0.0 = far left, 0.5 = center, 1.0 = far right) for 4:5/9:16 crops. Set via the drag gesture or slider in `MarkerPreviewView`'s lightbox.
 
-- `ProcessingUtilities.cropImageToAspectRatio(_:targetRatio:horizontalOffset:)` uses it for still crops.
-- `VideoSnippetProcessor.exportCroppedClip` uses it via `CGAffineTransform` translation for video crops.
-- When both 4:5 and 9:16 are enabled, 9:16 gets the reframe offset; 4:5 stays centered.
+- `ProcessingUtilities.cropImageToAspectRatio(_:targetRatio:horizontalOffset:)` uses it for still crops
+- `VideoSnippetProcessor.exportCroppedClip` uses it via `CGAffineTransform` translation
+- When both 4:5 and 9:16 are enabled, 9:16 gets the reframe offset; 4:5 stays centered
+
+## Grid system
+
+Per `CellTransform` for each cell in each grid:
+- **Drag** anywhere inside a cell → pan
+- **Pinch** (trackpad) / **scroll-wheel** / **slider** (hover-revealed) → zoom (1.0×–4.0×)
+- **Right-click** → Reset Crop / Loop ×N / Remove from Grid
+- **Move pill** (top-left, hover) → drag to swap with another cell
+- **Source pane** → click adds to next empty slot; drag onto a specific cell assigns / replaces / moves
+- **Loop pill** (top-right, clip cells only) → click cycles 1× → 8× → 1×
+
+Export math: `CellTransform.drawRect(srcSize:cellRect:)` is the single source of truth — both the SwiftUI preview and the CG compositor in `GridExporter` use it. WYSIWYG.
+
+Video grid duration = `max(clip.duration × loopCount(for: clip))` across cells. Shorter clips loop via modulo extraction.
 
 ## LUT System
 
@@ -124,36 +208,13 @@ LUTs live in two places:
 
 `LUTProcessor` parses `.cube` files into a flat `[Float]` array passed to `CIColorCubeWithColorSpace`. The player applies this via `AVVideoCompositionCoreAnimationTool`; exporters apply it via `CIContext`.
 
-## Recent Work (2026-03-15)
+## Sandbox / security-scoped resources
 
-### Per-clip reframe offset
-- Added `reframeOffset: CGFloat = 0.5` to both `MarkedStill` and `MarkedClip` structs in `MarkingState.swift`
-- Added `updateReframeOffset(forStill:offset:)` and `updateReframeOffset(forClip:offset:)` mutation methods
-- `VideoProcessor` now takes `reframeOffsets: [CGFloat]?` — offsets are paired with timestamps before sorting to maintain correct mapping
-- `VideoSnippetProcessor.exportClipAndGIF` takes `reframeOffset: CGFloat = 0.5`; passed through to `exportCroppedClip` and `createGIF`
-- Priority rule: when both 4:5 and 9:16 are enabled, 9:16 gets the reframe offset; 4:5 stays centered
+Output folder access uses `startAccessingSecurityScopedResource()` / `stopAccessingSecurityScopedResource()` wrapping `exportManual` in `ExportSettingsView` — required for iCloud Drive paths where ImageIO's atomic-write staging files would otherwise fail with "Operation not permitted". Restored bookmarks across launches work the same way.
 
-### Preview & Reframe UI (MarkerPreviewView in ManualMarkingView.swift)
-- Renamed "Preview" button/header to "Preview & Reframe"
-- `MarkerPreviewView` now takes `@ObservedObject var markingState: MarkingState` + `let reframeRatio: VideoSnippetProcessor.AspectRatioCrop?`
-- Lightbox shows a crop overlay (GeometryReader-based dim outside crop window) when `reframeRatio != nil`
-- Slider and drag gesture both control `localReframeOffset`; committed to `MarkingState` on release via `commitReframeOffset()`
-- Drag direction: positive translation → increase offset (crop frame moves right)
-- `NSCursor.resizeLeftRight` applied on hover over the image area
+## Tricky bits worth knowing
 
-### UI compression
-- Bottom export bar uses `.controlSize(.regular)` (was `.large`), padding reduced
-- Version footer uses `.system(size: 9)`, top padding reduced to 2pt
-
-### Tooltips
-- `.help()` modifiers added to ~40 interactive elements across `ExportSettingsView.swift`, `ManualMarkingView.swift`, and `ContentView.swift`
-
-### Documentation
-- `docs/documentation.md` — full user guide written and linked from README and Help menu
-- `FramePullApp.swift` Help menu command opens the local docs file via `NSWorkspace`
-
-### Cleanup
-- Deleted `AnalysisSettingsView.swift` (dead code — superseded by inline generate panel)
-- Deleted `GIFProcessor.swift` (dead code — GIF export lives in `VideoSnippetProcessor`)
-- Deleted root `/LUTs/` and root `VideoTutorial1.mp4` (duplicates not in app bundle)
-- Removed deleted files from `project.pbxproj`
+- **`AnimatedGIFView`** uses a `PassthroughImageView` (NSImageView subclass) that returns `nil` from `hitTest`, `false` from `acceptsFirstResponder` / `acceptsFirstMouse`, and forwards mouseDown/Up/Dragged to the next responder. Required for `.onDrag` and `.onTapGesture` to work on parent SwiftUI views — NSImageView swallows mouse events at the AppKit layer otherwise.
+- **`HSplitView` autosave** is done via a tiny `SplitViewAutosave` NSViewRepresentable that walks up to the enclosing NSSplitView and sets `autosaveName = "GridBuilderSplit"`.
+- **`GridExporter.exportVideoGrid`** uses `defer { writer.cancelWriting() + remove file }` on any throw (including cancellation) so user-aborted exports never leave a corrupt MP4.
+- **Snap doesn't shrink the visible clip range past the cut** — the 1-frame OUT offset stops the clip just before the cut frame, never crosses it.

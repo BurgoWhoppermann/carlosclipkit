@@ -1,6 +1,12 @@
 # Grid Creation — Concept & Implementation
 
-This document explains the design and implementation of the grid creation feature in FramePull Mobile, written so the same feature can be ported to the macOS version of FramePull.
+> **Status:** the macOS port has shipped. This doc is preserved as the original iOS
+> design reference. For the user-facing guide to the macOS grid composer see
+> [`docs/documentation.md § 7.2 Create Grids`](docs/documentation.md#72-create-grids).
+> For the macOS architecture (sparse cells, `CellTransform`, frame-by-frame video
+> compositor, etc.) see [`CLAUDE.md` / `AGENTS.md`](CLAUDE.md).
+
+This document explains the design and implementation of the grid creation feature in FramePull Mobile, written so the same feature could be ported to the macOS version of FramePull.
 
 ---
 
