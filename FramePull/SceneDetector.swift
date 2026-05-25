@@ -43,18 +43,20 @@ class SceneDetector: @unchecked Sendable {
     }
 
     /// Detect scene cuts by analyzing frame differences using color histogram comparison.
-    /// Uses batch frame generation for 3-5x speedup over sequential extraction.
+    /// Samples at the source's native frame rate with zero seek tolerance — every recorded
+    /// cut lands exactly on a source frame boundary. Uses batch frame generation for
+    /// sequential decode (no per-frame seek).
     /// - Parameters:
     ///   - asset: The video asset to analyze
-    ///   - threshold: Bhattacharyya distance threshold (0.0-1.0), higher = fewer cuts detected. Real cuts typically score 0.4-0.7, motion/lighting 0.05-0.25
-    ///   - samplingInterval: Time between sampled frames in seconds
-    ///   - minimumSceneDuration: Minimum duration for a scene in seconds (to avoid micro-scenes)
-    ///   - progress: Optional callback reporting fraction complete (0.0-1.0)
+    ///   - threshold: Bhattacharyya distance threshold (0.0–1.0), higher = fewer cuts.
+    ///     Real cuts typically score 0.4–0.7, motion/lighting 0.05–0.25.
+    ///   - minimumSceneDuration: Minimum duration for a scene in seconds (suppresses
+    ///     multiple cuts inside the same transition fade)
+    ///   - progress: Optional callback reporting fraction complete (0.0–1.0)
     /// - Returns: Array of timestamps where scene cuts were detected
     func detectSceneCuts(
         from asset: AVURLAsset,
         threshold: Double = 0.35,
-        samplingInterval: Double = 0.1,
         minimumSceneDuration: Double = 0.15,
         progress: ((Double) -> Void)? = nil
     ) async throws -> [Double] {
@@ -70,23 +72,29 @@ class SceneDetector: @unchecked Sendable {
             throw SceneDetectorError.cannotGetDuration
         }
 
-        // Adaptive sampling: use larger interval for long videos (>5 min)
-        // Real cuts rarely happen faster than 0.2s apart, so this is safe
-        let effectiveInterval = durationSeconds > 300 ? max(samplingInterval, 0.2) : samplingInterval
+        // Load the source's nominal frame rate and sample once per frame. Default to 30 if
+        // the track doesn't report a usable value (rare).
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let nominalFps: Float = (try? await tracks.first?.load(.nominalFrameRate)) ?? 30
+        let fps = Double(nominalFps > 0 ? nominalFps : 30)
+        let frameInterval = 1.0 / fps
 
-        // Set up image generator with small output size for speed
+        // Set up image generator with zero tolerance so the extracted frame is the actual
+        // frame at the requested time, not a nearby keyframe. Small output size keeps
+        // histogram computation fast.
         let imageGenerator = AVAssetImageGenerator(asset: asset)
         imageGenerator.appliesPreferredTrackTransform = true
-        imageGenerator.maximumSize = CGSize(width: 128, height: 128)  // Small size for fast extraction
-        imageGenerator.requestedTimeToleranceBefore = CMTime(seconds: effectiveInterval, preferredTimescale: 600)
-        imageGenerator.requestedTimeToleranceAfter = CMTime(seconds: effectiveInterval, preferredTimescale: 600)
+        imageGenerator.maximumSize = CGSize(width: 128, height: 128)
+        imageGenerator.requestedTimeToleranceBefore = .zero
+        imageGenerator.requestedTimeToleranceAfter = .zero
 
-        // Generate timestamps to sample
+        // Generate timestamps to sample — one per source frame.
+        let timescale: CMTimeScale = 600
         var sampleTimes: [CMTime] = []
         var currentTime = 0.0
         while currentTime < durationSeconds {
-            sampleTimes.append(CMTime(seconds: currentTime, preferredTimescale: 600))
-            currentTime += effectiveInterval
+            sampleTimes.append(CMTime(seconds: currentTime, preferredTimescale: timescale))
+            currentTime += frameInterval
         }
 
         let totalSamples = sampleTimes.count
@@ -118,7 +126,10 @@ class SceneDetector: @unchecked Sendable {
                 }
 
                 framesProcessed += 1
-                let sampleTime = CMTimeGetSeconds(requestedTime)
+                // Use the ACTUAL decoded frame time (not requestedTime). With zero tolerance
+                // they're effectively equal, but actualTime reflects exactly which frame the
+                // decoder produced — guaranteed frame-aligned.
+                let sampleTime = CMTimeGetSeconds(actualTime)
 
                 if let image = cgImage {
                     let currentHistogram = self.computeHistogram(for: image)
