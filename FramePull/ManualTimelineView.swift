@@ -51,6 +51,10 @@ struct ManualTimelineView: View {
     // user grabs the thumb off-center.
     @State private var scrollDragStartCursorX: CGFloat? = nil
 
+    // Previous zoom level — captured so onChange can compute the OLD visible window's center
+    // and keep that center put when the user moves the zoom slider (no jump to playhead).
+    @State private var prevZoomLevel: Double = 1.0
+
     /// Seconds visible at the current zoom level (i.e. the width of the visible window).
     private var visibleDuration: Double {
         max(0.01, duration / max(1, Double(zoomLevel)))
@@ -450,13 +454,15 @@ struct ManualTimelineView: View {
         .onChange(of: currentTime) { newTime in
             autoPageIfNeeded(playheadTime: newTime)
         }
-        .onChange(of: zoomLevel) { _ in
-            recenterOnZoomChange()
+        .onChange(of: zoomLevel) { newZoom in
+            recenterOnZoomChange(from: prevZoomLevel)
+            prevZoomLevel = newZoom
         }
         .onChange(of: duration) { _ in
             // If the loaded video changes, reset scroll.
             scrollTime = 0
         }
+        .onAppear { prevZoomLevel = zoomLevel }
     }
 
     private func nearestStillId(at xPosition: CGFloat, width: CGFloat) -> UUID? {
@@ -508,12 +514,16 @@ struct ManualTimelineView: View {
         }
     }
 
-    /// Re-center the visible window on the playhead when the zoom level changes — prevents
-    /// disorienting jumps where the playhead lands outside the new window.
-    private func recenterOnZoomChange() {
+    /// Re-anchor the visible window on its CURRENT centre when the zoom level changes — so
+    /// the content the user is looking at stays put under the cursor instead of jumping to
+    /// wherever the playhead happens to be.
+    private func recenterOnZoomChange(from oldZoom: Double) {
+        let oldVisible = max(0.01, duration / max(1, oldZoom))
+        // Compute pre-zoom centre using the OLD visible duration and the (still-unchanged) scrollTime.
+        let oldCenter = scrollTime + oldVisible / 2
         let newVisible = visibleDuration
-        let centered = currentTime - newVisible / 2
-        scrollTime = max(0, min(max(0, duration - newVisible), centered))
+        // Pin that centre in the new window. clamp handles the edges.
+        scrollTime = max(0, min(max(0, duration - newVisible), oldCenter - newVisible / 2))
     }
 
     @ViewBuilder
