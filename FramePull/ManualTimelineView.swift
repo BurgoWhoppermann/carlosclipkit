@@ -46,6 +46,11 @@ struct ManualTimelineView: View {
     // they're dragging a marker.
     @State private var dragStartScrollTime: Double = 0
 
+    // Cursor x recorded at the start of a scroll-thumb drag (nil when no thumb drag is active).
+    // Used to compute drag delta so the thumb follows the cursor exactly — no jump when the
+    // user grabs the thumb off-center.
+    @State private var scrollDragStartCursorX: CGFloat? = nil
+
     /// Seconds visible at the current zoom level (i.e. the width of the visible window).
     private var visibleDuration: Double {
         max(0.01, duration / max(1, Double(zoomLevel)))
@@ -540,12 +545,33 @@ struct ManualTimelineView: View {
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
-                            // Map cursor x to scrollTime, anchoring the thumb's CENTER under
-                            // the cursor so click-on-track jumps the visible window there.
-                            let targetCenterX = value.location.x
-                            let leftEdge = max(0, min(barWidth - thumbWidth, targetCenterX - thumbWidth / 2))
-                            let frac = barWidth > thumbWidth ? Double(leftEdge / (barWidth - thumbWidth)) : 0
-                            scrollTime = frac * maxScrollTime
+                            let trackRange = max(1, barWidth - thumbWidth)
+                            if scrollDragStartCursorX == nil {
+                                // First .onChanged of this drag. Decide: did the user grab
+                                // the thumb (keep current scrollTime, follow cursor delta)
+                                // or click on empty track (jump thumb to cursor first)?
+                                let thumbLeft = CGFloat(positionFraction) * trackRange
+                                let thumbRight = thumbLeft + thumbWidth
+                                let onThumb = value.location.x >= thumbLeft && value.location.x <= thumbRight
+                                if !onThumb {
+                                    // Click on track — jump thumb so its center lands under
+                                    // the cursor, then continue with delta drag from there.
+                                    let leftEdge = max(0, min(trackRange, value.location.x - thumbWidth / 2))
+                                    let frac = Double(leftEdge / trackRange)
+                                    scrollTime = frac * maxScrollTime
+                                }
+                                scrollDragStartCursorX = value.location.x
+                                dragStartScrollTime = scrollTime
+                                return
+                            }
+                            // Subsequent .onChanged calls: convert cursor delta to scrollTime delta.
+                            // Thumb follows the cursor exactly — no off-center jump.
+                            let deltaX = value.location.x - (scrollDragStartCursorX ?? value.location.x)
+                            let deltaTime = Double(deltaX) / Double(trackRange) * maxScrollTime
+                            scrollTime = max(0, min(maxScrollTime, dragStartScrollTime + deltaTime))
+                        }
+                        .onEnded { _ in
+                            scrollDragStartCursorX = nil
                         }
                 )
                 .help("Drag to scroll the visible portion of the timeline")
