@@ -1,4 +1,18 @@
 import SwiftUI
+import AppKit
+
+/// Mutable holder shared with the NSEvent scroll-wheel monitor so the monitor's closure always
+/// reads fresh values (closures freeze the View struct at install time; this gives us a stable
+/// reference whose contents we update each render).
+private final class TimelineScrollBox {
+    var scrollTimeBinding: Binding<Double>?
+    var visibleDuration: Double = 1
+    var maxScrollTime: Double = 0
+    var viewportWidth: CGFloat = 1
+    /// Set to false when a marker drag or scroll-thumb drag is active so the wheel doesn't
+    /// fight the gesture in progress.
+    var enabled: Bool = true
+}
 
 // MARK: - Manual Timeline View
 struct ManualTimelineView: View {
@@ -54,6 +68,13 @@ struct ManualTimelineView: View {
     // Previous zoom level — captured so onChange can compute the OLD visible window's center
     // and keep that center put when the user moves the zoom slider (no jump to playhead).
     @State private var prevZoomLevel: Double = 1.0
+
+    // Reference box that the NSEvent scroll-wheel monitor reads from. We can't have the
+    // monitor's closure capture @State directly (closures freeze the View struct at install
+    // time), so we forward a reference type and update its fields each render.
+    @State private var scrollBox = TimelineScrollBox()
+    @State private var scrollWheelMonitor: Any? = nil
+    @State private var timelineHovered: Bool = false
 
     /// Seconds visible at the current zoom level (i.e. the width of the visible window).
     private var visibleDuration: Double {
@@ -134,6 +155,8 @@ struct ManualTimelineView: View {
             // No .offset / .clipped — markers/cuts are filtered to the visible range instead.
             let viewportWidth = geometry.size.width
             let width = viewportWidth      // legacy name retained for the math helpers below
+            // Keep the scroll-wheel box in sync with the latest viewport (re-runs on each layout).
+            let _ = { scrollBox.viewportWidth = viewportWidth }()
             let visStart = clampedScrollTime
             let visEnd = visStart + visibleDuration
             VStack(spacing: 2) {
@@ -446,7 +469,7 @@ struct ManualTimelineView: View {
 
             // Scroll thumb — drags scrollTime directly (true pan, no seeking).
             scrollIndicator(viewportWidth: viewportWidth)
-                .frame(height: 16)
+                .frame(height: 24)
                 .padding(.horizontal, 4)
             } // VStack
         }
@@ -457,12 +480,27 @@ struct ManualTimelineView: View {
         .onChange(of: zoomLevel) { newZoom in
             recenterOnZoomChange(from: prevZoomLevel)
             prevZoomLevel = newZoom
+            updateScrollBox()
         }
         .onChange(of: duration) { _ in
             // If the loaded video changes, reset scroll.
             scrollTime = 0
+            updateScrollBox()
         }
-        .onAppear { prevZoomLevel = zoomLevel }
+        .onChange(of: scrollTime) { _ in updateScrollBox() }
+        .onChange(of: draggingStillId) { _ in updateScrollBox() }
+        .onChange(of: draggingClipId) { _ in updateScrollBox() }
+        .onChange(of: scrollDragStartCursorX) { _ in updateScrollBox() }
+        .onHover { hovering in
+            timelineHovered = hovering
+            if hovering { installScrollWheelMonitor() } else { removeScrollWheelMonitor() }
+        }
+        .onAppear {
+            prevZoomLevel = zoomLevel
+            scrollBox.scrollTimeBinding = $scrollTime
+            updateScrollBox()
+        }
+        .onDisappear { removeScrollWheelMonitor() }
     }
 
     private func nearestStillId(at xPosition: CGFloat, width: CGFloat) -> UUID? {
@@ -514,6 +552,53 @@ struct ManualTimelineView: View {
         }
     }
 
+    /// Mirror the current scroll-related state into the shared reference box so the NSEvent
+    /// monitor closure can read fresh values when wheel events fire.
+    private func updateScrollBox() {
+        scrollBox.visibleDuration = visibleDuration
+        scrollBox.maxScrollTime = max(0, duration - visibleDuration)
+        scrollBox.enabled = (draggingStillId == nil && draggingClipId == nil && scrollDragStartCursorX == nil)
+    }
+
+    /// Install a local NSEvent monitor that captures horizontal scroll while the cursor is over
+    /// the timeline and translates it to a `scrollTime` change. Trackpad / Magic Mouse two-axis
+    /// scrolling works natively; on a regular mouse, holding Shift while scrolling vertically
+    /// is mapped to horizontal pan (the macOS convention).
+    private func installScrollWheelMonitor() {
+        guard scrollWheelMonitor == nil else { return }
+        let box = scrollBox
+        scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            guard box.enabled, let binding = box.scrollTimeBinding else { return event }
+            // Pick the horizontal axis. If the user is shift-scrolling, take the vertical delta.
+            let dx: CGFloat
+            if abs(event.scrollingDeltaX) > 0.1 {
+                dx = event.scrollingDeltaX
+            } else if event.modifierFlags.contains(.shift), abs(event.scrollingDeltaY) > 0.1 {
+                dx = event.scrollingDeltaY
+            } else {
+                return event   // pure vertical scroll without shift — not for us
+            }
+            guard box.viewportWidth > 0, box.visibleDuration > 0, box.maxScrollTime > 0 else {
+                return event
+            }
+            // Natural-scroll convention: positive deltaX = user swiped finger right = content
+            // moves right = we want to see content from the LEFT = scrollTime decreases.
+            let deltaTime = -Double(dx / box.viewportWidth) * box.visibleDuration
+            let newTime = max(0, min(box.maxScrollTime, binding.wrappedValue + deltaTime))
+            if newTime != binding.wrappedValue {
+                binding.wrappedValue = newTime
+            }
+            return nil  // consume — don't let the event bubble up to other handlers
+        }
+    }
+
+    private func removeScrollWheelMonitor() {
+        if let m = scrollWheelMonitor {
+            NSEvent.removeMonitor(m)
+            scrollWheelMonitor = nil
+        }
+    }
+
     /// Anchor zoom on the playhead's CURRENT screen-fraction position. If the playhead is
     /// visible at 30% from the left, it stays at 30% from the left after zoom — the window
     /// just shrinks/grows around it. If the playhead is offscreen, it stays offscreen at the
@@ -543,13 +628,13 @@ struct ManualTimelineView: View {
                 let maxOffset = barWidth - thumbWidth
 
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 1.5)
+                    RoundedRectangle(cornerRadius: 4)
                         .fill(Color.gray.opacity(0.15))
-                        .frame(height: 5)
+                        .frame(height: 8)
 
-                    RoundedRectangle(cornerRadius: 1.5)
+                    RoundedRectangle(cornerRadius: 4)
                         .fill(Color.secondary.opacity(0.5))
-                        .frame(width: thumbWidth, height: 5)
+                        .frame(width: thumbWidth, height: 8)
                         .offset(x: min(maxOffset, max(0, CGFloat(positionFraction) * maxOffset)))
                 }
                 .frame(maxHeight: .infinity)
