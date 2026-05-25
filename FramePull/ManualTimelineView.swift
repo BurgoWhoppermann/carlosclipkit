@@ -23,6 +23,7 @@ struct ManualTimelineView: View {
     let markedStills: [MarkedStill]
     let markedClips: [MarkedClip]
     let pendingInPoint: Double?
+    let pendingOutPoint: Double?
     let onStillPositionChanged: (UUID, Double) -> Void
     let onStillRemoved: (UUID) -> Void
     let onClipRemoved: (UUID) -> Void
@@ -344,9 +345,19 @@ struct ManualTimelineView: View {
                         .zIndex(isDragging && draggingClipEdge == .outPoint ? 50 : 5)
                 }
 
-                // Pending IN point (orange dashed line — clip lane)
+                // Pending IN point (orange line — clip lane). Either kind of pending marker
+                // (IN or OUT) renders the same way; the user sees a single orange line waiting
+                // for the matching keystroke to complete the clip.
                 if let pendingIn = pendingInPoint, pendingIn >= visStart, pendingIn <= visEnd {
                     let x = xPosition(for: pendingIn, width: width)
+                    Rectangle()
+                        .fill(pendingColor)
+                        .frame(width: 3, height: 24)
+                        .position(x: x, y: 40)
+                        .zIndex(15)
+                }
+                if let pendingOut = pendingOutPoint, pendingOut >= visStart, pendingOut <= visEnd {
+                    let x = xPosition(for: pendingOut, width: width)
                     Rectangle()
                         .fill(pendingColor)
                         .frame(width: 3, height: 24)

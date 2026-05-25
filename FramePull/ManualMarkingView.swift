@@ -199,8 +199,9 @@ struct ManualMarkingView: View {
                 // Controls bar
                 controlsBar
 
-                // Pending clip indicator
-                if markingState.pendingInPoint != nil {
+                // Pending clip indicator — either an IN waiting for an OUT, or an OUT waiting
+                // for an IN (the user can mark a loop in either order).
+                if markingState.pendingInPoint != nil || markingState.pendingOutPoint != nil {
                     pendingClipIndicator
                 }
 
@@ -291,7 +292,7 @@ struct ManualMarkingView: View {
                     self.flashKey("S")
                     return nil
                 case "i":
-                    ms.setInPoint(at: pc.currentTime, snapEnabled: app.snapToSceneCuts)
+                    ms.setInPoint(at: pc.currentTime, snapEnabled: app.snapToSceneCuts, isManual: true)
                     app.exportMovingClipsEnabled = true
                     self.flashKey("I")
                     return nil
@@ -607,10 +608,9 @@ struct ManualMarkingView: View {
                 .help("Mark IN point (I)")
 
                 Button(action: { handleKeyPress(.outPoint) }) {
-                    keyCap("O", glowColor: .green)
+                    keyCap("O", glowColor: markingState.pendingOutPoint != nil ? .orange : .green)
                 }
                 .buttonStyle(.plain)
-                .disabled(markingState.pendingInPoint == nil)
                 .onHover { hovering in
                     if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
                 }
@@ -1028,10 +1028,9 @@ struct ManualMarkingView: View {
                     .help("Mark IN point (I)")
 
                     Button(action: { handleKeyPress(.outPoint) }) {
-                        keyCap("O", glowColor: .green)
+                        keyCap("O", glowColor: markingState.pendingOutPoint != nil ? .orange : .green)
                     }
                     .buttonStyle(.plain)
-                    .disabled(markingState.pendingInPoint == nil)
                     .help("Mark OUT point (O)")
                 }
                 .onboardingHighlight(.manualControls)
@@ -1144,6 +1143,7 @@ struct ManualMarkingView: View {
                 markedStills: appState.exportStillsEnabled ? markingState.markedStills : [],
                 markedClips: appState.exportMovingClipsEnabled ? markingState.markedClips : [],
                 pendingInPoint: markingState.pendingInPoint,
+                pendingOutPoint: markingState.pendingOutPoint,
                 onStillPositionChanged: { id, newTime in
                     markingState.updateStillPosition(id: id, to: newTime)
                 },
@@ -1421,7 +1421,7 @@ struct ManualMarkingView: View {
         HStack {
             Image(systemName: "arrow.right.circle")
                 .foregroundColor(.orange)
-            Text("IN: \(markingState.formattedPendingInPoint ?? "") -> ?")
+            Text(pendingClipLabel)
                 .font(.system(.body, design: .monospaced))
 
             Spacer()
@@ -1431,11 +1431,21 @@ struct ManualMarkingView: View {
             .buttonStyle(.plain)
             .foregroundColor(.secondary)
             .font(.caption)
-            .help("Cancel the pending IN point")
+            .help("Cancel the pending marker")
         }
         .padding(.horizontal)
         .padding(.vertical, 6)
         .background(Color.orange.opacity(0.1))
+    }
+
+    /// "IN: 0:05 → ?" when waiting for OUT, "? → OUT: 0:12" when waiting for IN.
+    private var pendingClipLabel: String {
+        if let inStr = markingState.formattedPendingInPoint {
+            return "IN: \(inStr) → ?"
+        } else if let outStr = markingState.formattedPendingOutPoint {
+            return "? → OUT: \(outStr)"
+        }
+        return ""
     }
 
     // MARK: - Stills Section
@@ -1809,7 +1819,7 @@ struct ManualMarkingView: View {
             flashKey("S")
 
         case .inPoint:
-            markingState.setInPoint(at: playerController.currentTime, snapEnabled: appState.snapToSceneCuts)
+            markingState.setInPoint(at: playerController.currentTime, snapEnabled: appState.snapToSceneCuts, isManual: true)
             appState.exportMovingClipsEnabled = true
             flashKey("I")
 

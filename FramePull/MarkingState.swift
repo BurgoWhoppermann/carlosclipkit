@@ -86,7 +86,12 @@ class MarkingState: ObservableObject {
     @Published var grids: [GridConfig] = []
 
     /// Pending IN point (waiting for OUT)
+    /// A pending IN point waiting for an OUT to complete the clip.
     @Published var pendingInPoint: Double?
+
+    /// A pending OUT point waiting for an IN to complete the clip — symmetric counterpart to
+    /// pendingInPoint. Lets users hit O first, then scrub back and hit I to close the loop.
+    @Published var pendingOutPoint: Double?
 
     /// Detected scene cuts from video analysis
     @Published var detectedCuts: [Double] = []
@@ -297,29 +302,59 @@ class MarkingState: ObservableObject {
         return forOutPoint ? nearest - frameDuration : nearest
     }
 
-    /// Set the IN point for a new clip
-    func setInPoint(at timestamp: Double, snapEnabled: Bool = false) {
-        let time = snapEnabled ? snapToNearestCut(timestamp) : timestamp
+    /// Set the IN point for a clip. If there's a pending OUT point AFTER this time, the
+    /// clip is closed (O→I ordering). If there's a pending OUT point BEFORE this time the
+    /// pending OUT is discarded and we start a fresh IN-first sequence. Otherwise this
+    /// simply sets `pendingInPoint`.
+    func setInPoint(at timestamp: Double, snapEnabled: Bool = false, isManual: Bool = false) {
+        let time = snapEnabled ? snapToNearestCut(timestamp, forOutPoint: false) : timestamp
+
+        // O→I path: complete the clip if the user previously set a pending OUT that's later
+        // than this IN.
+        if let pendingOut = pendingOutPoint, time < pendingOut {
+            let clip = MarkedClip(inPoint: time, outPoint: pendingOut, isManual: isManual)
+            markedClips.append(clip)
+            markedClips.sort { $0.inPoint < $1.inPoint }
+            pendingInPoint = nil
+            pendingOutPoint = nil
+            recordUndo(.addedClip(clip))
+            return
+        }
+
+        // Fresh IN: clear any stale pending OUT (e.g. user hit O, then changed mind and hit I
+        // at a later time) and remember this IN for the next O.
+        pendingOutPoint = nil
         pendingInPoint = time
     }
 
-    /// Set the OUT point and create a clip
+    /// Set the OUT point for a clip. If there's a pending IN point BEFORE this time, the
+    /// clip is closed (I→O ordering, the original behaviour). If there's no pending IN OR
+    /// the pending IN is after this time, treat as O-first: store `pendingOutPoint` and
+    /// wait for a subsequent IN.
     func setOutPoint(at timestamp: Double, snapEnabled: Bool = false, isManual: Bool = false) {
-        guard let inPoint = pendingInPoint else { return }
-
         let time = snapEnabled ? snapToNearestCut(timestamp, forOutPoint: true) : timestamp
-        guard time > inPoint else { return }
 
-        let clip = MarkedClip(inPoint: inPoint, outPoint: time, isManual: isManual)
-        markedClips.append(clip)
-        markedClips.sort { $0.inPoint < $1.inPoint }
+        // I→O path: complete the clip if there's a pending IN earlier than this OUT.
+        if let pendingIn = pendingInPoint, time > pendingIn {
+            let clip = MarkedClip(inPoint: pendingIn, outPoint: time, isManual: isManual)
+            markedClips.append(clip)
+            markedClips.sort { $0.inPoint < $1.inPoint }
+            pendingInPoint = nil
+            pendingOutPoint = nil
+            recordUndo(.addedClip(clip))
+            return
+        }
+
+        // Fresh OUT (or stale pending IN that's after this OUT — user changed mind):
+        // discard the stale pending IN and remember this OUT for a subsequent I.
         pendingInPoint = nil
-        recordUndo(.addedClip(clip))
+        pendingOutPoint = time
     }
 
-    /// Cancel the pending IN point
+    /// Cancel any pending IN / OUT (Esc).
     func cancelPendingInPoint() {
         pendingInPoint = nil
+        pendingOutPoint = nil
     }
 
     /// Remove a clip by ID
@@ -377,6 +412,12 @@ class MarkingState: ObservableObject {
     var formattedPendingInPoint: String? {
         guard let inPoint = pendingInPoint else { return nil }
         return formatTimestamp(inPoint)
+    }
+
+    /// Formatted pending OUT point (set when the user starts a clip with O instead of I)
+    var formattedPendingOutPoint: String? {
+        guard let outPoint = pendingOutPoint else { return nil }
+        return formatTimestamp(outPoint)
     }
 
     /// Update a still's position (for drag editing) — promotes to manual
