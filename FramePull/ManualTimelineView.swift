@@ -38,8 +38,23 @@ struct ManualTimelineView: View {
     // Zoom state
     @Binding var zoomLevel: Double
 
-    // Scroll offset frozen at drag-start so the view doesn't shift under the user's cursor
-    @State private var dragStartScrollOffset: CGFloat = 0
+    // Visible-window scroll anchor (in seconds): time displayed at the LEFT edge of the
+    // viewport. When zoomLevel == 1, scrollTime == 0 and the whole timeline fits.
+    @State private var scrollTime: Double = 0
+
+    // scrollTime frozen at drag-start so the view doesn't shift under the user's cursor while
+    // they're dragging a marker.
+    @State private var dragStartScrollTime: Double = 0
+
+    /// Seconds visible at the current zoom level (i.e. the width of the visible window).
+    private var visibleDuration: Double {
+        max(0.01, duration / max(1, Double(zoomLevel)))
+    }
+
+    /// scrollTime clamped to [0, duration - visibleDuration] so we never scroll past either edge.
+    private var clampedScrollTime: Double {
+        max(0, min(max(0, duration - visibleDuration), scrollTime))
+    }
 
     enum ClipEdge {
         case inPoint
@@ -105,9 +120,13 @@ struct ManualTimelineView: View {
 
     var body: some View {
         GeometryReader { geometry in
+            // Visible-window model: the timeline always renders at viewport width. Zoom shrinks
+            // the visible time range (visibleDuration) rather than growing the rendered width.
+            // No .offset / .clipped — markers/cuts are filtered to the visible range instead.
             let viewportWidth = geometry.size.width
-            let width = viewportWidth * CGFloat(zoomLevel)
-            let scrollOffset = computedScrollOffset(contentWidth: width, viewportWidth: viewportWidth)
+            let width = viewportWidth      // legacy name retained for the math helpers below
+            let visStart = clampedScrollTime
+            let visEnd = visStart + visibleDuration
             VStack(spacing: 2) {
 
             ZStack(alignment: .topLeading) {
@@ -117,8 +136,10 @@ struct ManualTimelineView: View {
                     .frame(height: timelineHeight - 4)
                     .padding(.top, 2)
 
-                // Scene cut markers (vertical lines)
-                ForEach(sceneCuts, id: \.self) { cut in
+                // Scene cut markers — filter to visible range so we never spend cycles laying
+                // out thousands of cuts at high zoom, and avoid the floating-point clip-edge
+                // glitches that made some markers disappear.
+                ForEach(sceneCuts.filter { $0 >= visStart && $0 <= visEnd }, id: \.self) { cut in
                     let x = xPosition(for: cut, width: width)
                     Rectangle()
                         .fill(cutColor)
@@ -126,8 +147,11 @@ struct ManualTimelineView: View {
                         .position(x: x, y: timelineHeight / 2)
                 }
 
-                // Marked clips (blue=manual, green=auto, ranges with draggable edges)
-                ForEach(markedClips) { clip in
+                // Marked clips — show any clip that overlaps the visible range. We DON'T filter
+                // the clip currently being dragged (it might temporarily move outside the window).
+                ForEach(markedClips.filter { clip in
+                    draggingClipId == clip.id || (clip.inPoint <= visEnd && clip.outPoint >= visStart)
+                }) { clip in
                     let inX = xPosition(for: clip.inPoint, width: width)
                     let outX = xPosition(for: clip.outPoint, width: width)
                     let isDragging = draggingClipId == clip.id
@@ -201,14 +225,14 @@ struct ManualTimelineView: View {
                         .highPriorityGesture(
                             DragGesture(minimumDistance: 1, coordinateSpace: .named("timeline"))
                                 .onChanged { value in
-                                    if draggingClipId != clip.id { dragStartScrollOffset = scrollOffset }
+                                    if draggingClipId != clip.id { dragStartScrollTime = scrollTime }
                                     draggingClipId = clip.id
                                     draggingClipEdge = .inPoint
                                     clipDragOffset = value.location.x - inX
                                 }
                                 .onEnded { value in
                                     let clampedX = max(0, min(width, value.location.x))
-                                    var newTime = (Double(clampedX) / Double(width)) * duration
+                                    var newTime = timeForX(clampedX, width: width)
                                     // Snap to playhead if within threshold
                                     if snapEnabled {
                                         let playheadX = xPosition(for: currentTime, width: width)
@@ -258,14 +282,14 @@ struct ManualTimelineView: View {
                         .highPriorityGesture(
                             DragGesture(minimumDistance: 1, coordinateSpace: .named("timeline"))
                                 .onChanged { value in
-                                    if draggingClipId != clip.id { dragStartScrollOffset = scrollOffset }
+                                    if draggingClipId != clip.id { dragStartScrollTime = scrollTime }
                                     draggingClipId = clip.id
                                     draggingClipEdge = .outPoint
                                     clipDragOffset = value.location.x - outX
                                 }
                                 .onEnded { value in
                                     let clampedX = max(0, min(width, value.location.x))
-                                    var newTime = (Double(clampedX) / Double(width)) * duration
+                                    var newTime = timeForX(clampedX, width: width)
                                     // Snap to playhead if within threshold
                                     if snapEnabled {
                                         let playheadX = xPosition(for: currentTime, width: width)
@@ -289,7 +313,7 @@ struct ManualTimelineView: View {
                 }
 
                 // Pending IN point (orange dashed line — clip lane)
-                if let pendingIn = pendingInPoint {
+                if let pendingIn = pendingInPoint, pendingIn >= visStart, pendingIn <= visEnd {
                     let x = xPosition(for: pendingIn, width: width)
                     Rectangle()
                         .fill(pendingColor)
@@ -298,8 +322,11 @@ struct ManualTimelineView: View {
                         .zIndex(15)
                 }
 
-                // Still markers (dots - blue=manual, orange=auto, draggable, selectable)
-                ForEach(markedStills) { still in
+                // Still markers — filter to visible range, but keep the one currently being
+                // dragged so the drag isn't interrupted if the user pulls it past the edge.
+                ForEach(markedStills.filter { still in
+                    draggingStillId == still.id || (still.timestamp >= visStart && still.timestamp <= visEnd)
+                }) { still in
                     let baseX = xPosition(for: still.timestamp, width: width)
                     let isDragging = draggingStillId == still.id
                     let isHovered = hoveredStillId == still.id
@@ -344,18 +371,18 @@ struct ManualTimelineView: View {
                             DragGesture(minimumDistance: 4, coordinateSpace: .named("timeline"))
                                 .onChanged { value in
                                     if draggingStillId != still.id {
-                                        dragStartScrollOffset = scrollOffset
+                                        dragStartScrollTime = scrollTime
                                         NSCursor.closedHand.push()
                                     }
                                     draggingStillId = still.id
                                     stillDragOffset = value.location.x - baseX
-                                    let newTime = (Double(max(0, min(width, value.location.x))) / Double(width)) * duration
-                                    onSeek(max(0, min(duration, newTime)))
+                                    let clampedX = max(0, min(width, value.location.x))
+                                    onSeek(timeForX(clampedX, width: width))
                                 }
                                 .onEnded { value in
                                     let clampedX = max(0, min(width, value.location.x))
-                                    let newTime = (Double(clampedX) / Double(width)) * duration
-                                    onStillPositionChanged(still.id, max(0, min(duration, newTime)))
+                                    let newTime = timeForX(clampedX, width: width)
+                                    onStillPositionChanged(still.id, newTime)
                                     draggingStillId = nil
                                     stillDragOffset = 0
                                     NSCursor.pop()
@@ -377,12 +404,6 @@ struct ManualTimelineView: View {
             }
             .coordinateSpace(name: "timeline")
             .frame(width: width, height: timelineHeight)
-            // Shift content so the playhead stays centred; offset IS included in the
-            // "timeline" coordinate space transform, so all gesture coordinates remain
-            // in content space — no gesture math changes needed.
-            .offset(x: -scrollOffset)
-            .frame(width: viewportWidth, alignment: .leading)
-            .clipped()
             .contentShape(Rectangle())
             .onHover { isHovering in
                 if !isHovering && draggingStillId == nil && draggingClipId == nil {
@@ -406,8 +427,7 @@ struct ManualTimelineView: View {
                            let still = markedStills.first(where: { $0.id == snapId }) {
                             onSeek(still.timestamp)
                         } else {
-                            let newTime = (Double(x) / Double(width)) * duration
-                            onSeek(max(0, min(duration, newTime)))
+                            onSeek(timeForX(x, width: width))
                         }
                     }
                     .onEnded { _ in
@@ -415,13 +435,23 @@ struct ManualTimelineView: View {
                     }
             )
 
-            // Scroll indicator
-            scrollIndicator(viewportWidth: viewportWidth, contentWidth: width, scrollOffset: scrollOffset)
+            // Scroll thumb — drags scrollTime directly (true pan, no seeking).
+            scrollIndicator(viewportWidth: viewportWidth)
                 .frame(height: 16)
                 .padding(.horizontal, 4)
             } // VStack
         }
         .frame(height: totalHeight)
+        .onChange(of: currentTime) { newTime in
+            autoPageIfNeeded(playheadTime: newTime)
+        }
+        .onChange(of: zoomLevel) { _ in
+            recenterOnZoomChange()
+        }
+        .onChange(of: duration) { _ in
+            // If the loaded video changes, reset scroll.
+            scrollTime = 0
+        }
     }
 
     private func nearestStillId(at xPosition: CGFloat, width: CGFloat) -> UUID? {
@@ -439,56 +469,86 @@ struct ManualTimelineView: View {
         return bestId
     }
 
+    /// Maps a time to its x in the viewport. Returns a value outside [0, width] for times
+    /// not in the visible window — callers should filter before drawing if perf matters,
+    /// but SwiftUI's renderer drops offscreen .position() values safely.
     private func xPosition(for time: Double, width: CGFloat) -> CGFloat {
-        guard duration > 0 else { return 0 }
-        return CGFloat((time / duration) * Double(width))
+        guard visibleDuration > 0 else { return 0 }
+        return CGFloat((time - clampedScrollTime) / visibleDuration) * width
     }
 
-    /// Returns the scroll offset that keeps the playhead centred in the viewport.
-    /// During marker drags the offset is frozen so the view doesn't jump under the cursor.
-    private func computedScrollOffset(contentWidth: CGFloat, viewportWidth: CGFloat) -> CGFloat {
-        guard zoomLevel > 1.0, contentWidth > viewportWidth else { return 0 }
-        if draggingStillId != nil || draggingClipId != nil {
-            return dragStartScrollOffset
+    /// Inverse of `xPosition`: maps a viewport-x coord to a time, clamped to the video duration.
+    private func timeForX(_ x: CGFloat, width: CGFloat) -> Double {
+        guard width > 0 else { return 0 }
+        let frac = max(0, min(1, Double(x / width)))
+        let t = clampedScrollTime + frac * visibleDuration
+        return max(0, min(duration, t))
+    }
+
+    /// Page-style auto-scroll: when the playhead crosses outside the visible window, jump
+    /// scrollTime so the playhead lands at ~10% from the left (or right when scrubbing back).
+    /// Inside the window the playhead moves freely — no per-frame offset chase.
+    private func autoPageIfNeeded(playheadTime: Double) {
+        guard zoomLevel > 1.0 else {
+            scrollTime = 0
+            return
         }
-        let playheadX = xPosition(for: currentTime, width: contentWidth)
-        let raw = playheadX - viewportWidth / 2
-        return max(0, min(contentWidth - viewportWidth, raw))
+        if draggingStillId != nil || draggingClipId != nil { return }
+        let visStart = clampedScrollTime
+        let visEnd = visStart + visibleDuration
+        if playheadTime > visEnd {
+            scrollTime = max(0, playheadTime - visibleDuration * 0.1)
+        } else if playheadTime < visStart {
+            scrollTime = max(0, playheadTime - visibleDuration * 0.1)
+        }
+    }
+
+    /// Re-center the visible window on the playhead when the zoom level changes — prevents
+    /// disorienting jumps where the playhead lands outside the new window.
+    private func recenterOnZoomChange() {
+        let newVisible = visibleDuration
+        let centered = currentTime - newVisible / 2
+        scrollTime = max(0, min(max(0, duration - newVisible), centered))
     }
 
     @ViewBuilder
-    private func scrollIndicator(viewportWidth: CGFloat, contentWidth: CGFloat, scrollOffset: CGFloat) -> some View {
-        if zoomLevel > 1.01 {
-            let thumbFraction = viewportWidth / contentWidth
-            let offsetFraction = contentWidth > viewportWidth
-                ? scrollOffset / (contentWidth - viewportWidth)
-                : 0
+    private func scrollIndicator(viewportWidth: CGFloat) -> some View {
+        if zoomLevel > 1.01 && duration > 0 {
+            // Thumb width = fraction of the timeline that's visible. Position = scrollTime
+            // mapped over the scrollable range [0, duration - visibleDuration].
+            let thumbFraction = visibleDuration / duration
+            let maxScrollTime = max(0.0001, duration - visibleDuration)
+            let positionFraction = clampedScrollTime / maxScrollTime
 
             GeometryReader { barGeo in
                 let barWidth = barGeo.size.width
-                let thumbWidth = max(12, barWidth * thumbFraction)
+                let thumbWidth = max(20, barWidth * CGFloat(thumbFraction))
                 let maxOffset = barWidth - thumbWidth
 
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 1.5)
                         .fill(Color.gray.opacity(0.15))
-                        .frame(height: 3)
+                        .frame(height: 5)
 
                     RoundedRectangle(cornerRadius: 1.5)
-                        .fill(Color.secondary.opacity(0.35))
-                        .frame(width: thumbWidth, height: 3)
-                        .offset(x: min(maxOffset, max(0, offsetFraction * maxOffset)))
+                        .fill(Color.secondary.opacity(0.5))
+                        .frame(width: thumbWidth, height: 5)
+                        .offset(x: min(maxOffset, max(0, CGFloat(positionFraction) * maxOffset)))
                 }
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
-                            let fraction = max(0, min(1, value.location.x / barWidth))
-                            let time = Double(fraction) * duration
-                            onSeek(max(0, min(duration, time)))
+                            // Map cursor x to scrollTime, anchoring the thumb's CENTER under
+                            // the cursor so click-on-track jumps the visible window there.
+                            let targetCenterX = value.location.x
+                            let leftEdge = max(0, min(barWidth - thumbWidth, targetCenterX - thumbWidth / 2))
+                            let frac = barWidth > thumbWidth ? Double(leftEdge / (barWidth - thumbWidth)) : 0
+                            scrollTime = frac * maxScrollTime
                         }
                 )
+                .help("Drag to scroll the visible portion of the timeline")
             }
         } else {
             Spacer()
