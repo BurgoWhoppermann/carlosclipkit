@@ -283,14 +283,16 @@ class MarkingState: ObservableObject {
         sweepGridsRemoving(.still(id))
     }
 
-    /// Snap a time to the nearest scene cut if within threshold.
-    /// IN points land exactly on the cut (no offset). OUT points step back by exactly one
-    /// source frame so the cut frame itself doesn't end up in the exported clip — the
-    /// frame duration is derived from the source video's nominal fps (no hardcoded 25/30).
-    func snapToNearestCut(_ time: Double, threshold: Double = 1.0, forOutPoint: Bool = false) -> Double {
+    /// Snap a time to the nearest scene cut, but only if it's within **4 source frames** of
+    /// one — otherwise the requested time is returned untouched. IN points land exactly on
+    /// the cut (no offset); OUT points step back by exactly one source frame so the cut
+    /// frame itself doesn't end up in the exported clip. Frame durations come from the
+    /// source video's nominal fps — no hardcoded 25/30.
+    func snapToNearestCut(_ time: Double, forOutPoint: Bool = false) -> Double {
         guard let nearest = detectedCuts.min(by: { abs($0 - time) < abs($1 - time) }) else {
             return time
         }
+        let threshold = 4.0 * frameDuration
         guard abs(nearest - time) <= threshold else { return time }
         return forOutPoint ? nearest - frameDuration : nearest
     }
