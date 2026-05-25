@@ -258,6 +258,9 @@ struct ManualMarkingView: View {
 
             // Don't autoplay — user can press Space or click to start
             appState.videoSize = playerController.videoSize
+            if playerController.sourceFrameRate > 0 {
+                markingState.sourceFrameRate = Double(playerController.sourceFrameRate)
+            }
 
             // Global key monitor ensures marking keys work even when focus is on UI controls
             let ms = markingState
@@ -349,6 +352,11 @@ struct ManualMarkingView: View {
         }
         .onChange(of: playerController.videoSize) { newSize in
             DispatchQueue.main.async { appState.videoSize = newSize }
+        }
+        .onChange(of: playerController.sourceFrameRate) { newFps in
+            DispatchQueue.main.async {
+                if newFps > 0 { markingState.sourceFrameRate = Double(newFps) }
+            }
         }
         .onChange(of: appState.showCoachMarks) { show in
             if show {
@@ -2013,9 +2021,15 @@ struct ManualMarkingView: View {
             allowOverlapping: appState.allowOverlapping,
             sceneRanges: effectiveScenes
         )
+        // Same rule as snapToNearestCut: IN lands exactly on the scene start, OUT steps
+        // back by one source-frame so the next cut's frame isn't included in the clip.
+        let frameDuration = markingState.frameDuration
         for spec in clipSpecs {
-            let frameDuration = 1.0 / 25.0
-            let clip = MarkedClip(inPoint: spec.start + frameDuration, outPoint: spec.start + spec.duration - frameDuration, isManual: false)
+            let clip = MarkedClip(
+                inPoint: spec.start,
+                outPoint: max(spec.start, spec.start + spec.duration - frameDuration),
+                isManual: false
+            )
             markingState.markedClips.append(clip)
         }
         markingState.markedClips.sort { $0.inPoint < $1.inPoint }
@@ -2047,8 +2061,7 @@ struct ManualMarkingView: View {
         let scenes = effectiveScenes
         guard !scenes.isEmpty else { return }
 
-        let frameDuration = 1.0 / 25.0
-        let cutMargin = 0.042 // ~1 frame at 24fps
+        let frameDuration = markingState.frameDuration
         let targetWindowSize = min(appState.scenesPerClip, scenes.count)
 
         // Collect existing clip intervals (both manual and auto)
@@ -2092,12 +2105,13 @@ struct ManualMarkingView: View {
                 let segEndScene = gapScenes[min(i + windowSize - 1, gapScenes.count - 1)].element
 
                 // Clamp to gap boundaries
-                let segStart = max(segStartScene.start + cutMargin, gap.start)
-                let segEnd = min(segEndScene.end - cutMargin, gap.end)
+                let segStart = max(segStartScene.start, gap.start)
+                let segEnd = min(segEndScene.end, gap.end)
 
-                // Safety: ensure at least 2 frames of content, skip last frame to avoid flash
-                let inPoint = segStart + frameDuration
-                let outPoint = segEnd - frameDuration
+                // Same rule as snap: IN lands exactly on the scene start, OUT steps back by
+                // one source frame so the next cut frame doesn't end up inside the clip.
+                let inPoint = segStart
+                let outPoint = max(segStart, segEnd - frameDuration)
 
                 if outPoint > inPoint + frameDuration {
                     let clip = MarkedClip(

@@ -127,7 +127,13 @@ class MarkingState: ObservableObject {
         }
     }
 
-    private let frameDuration: Double = 1.0 / 25.0
+    /// Source video's nominal frame rate, set by the parent view once the asset has loaded.
+    /// Defaults to 30 fps until populated. All frame-based offsets (snap, auto-generate,
+    /// dedup-by-frame, frame-stepping) derive from this single source of truth.
+    @Published var sourceFrameRate: Double = 30.0
+
+    /// Duration of one source frame in seconds. Replaces the old hardcoded 1/25.
+    var frameDuration: Double { 1.0 / max(1.0, sourceFrameRate) }
 
     // MARK: - Undo
 
@@ -277,16 +283,16 @@ class MarkingState: ObservableObject {
         sweepGridsRemoving(.still(id))
     }
 
-    /// Snap a time to the nearest scene cut if within threshold
-    /// When forOutPoint is true, offsets 1 frame before the cut to avoid transition flicker
-    /// When forOutPoint is false (in-point), offsets 1 frame after the cut
+    /// Snap a time to the nearest scene cut if within threshold.
+    /// IN points land exactly on the cut (no offset). OUT points step back by exactly one
+    /// source frame so the cut frame itself doesn't end up in the exported clip — the
+    /// frame duration is derived from the source video's nominal fps (no hardcoded 25/30).
     func snapToNearestCut(_ time: Double, threshold: Double = 1.0, forOutPoint: Bool = false) -> Double {
         guard let nearest = detectedCuts.min(by: { abs($0 - time) < abs($1 - time) }) else {
             return time
         }
         guard abs(nearest - time) <= threshold else { return time }
-        let safetyMargin = 2.0 * frameDuration  // 2 frames to reliably avoid the cut frame
-        return forOutPoint ? nearest - safetyMargin : nearest + safetyMargin
+        return forOutPoint ? nearest - frameDuration : nearest
     }
 
     /// Set the IN point for a new clip

@@ -140,6 +140,8 @@ class LoopingPlayerController: ObservableObject {
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
     @Published var videoSize: CGSize = CGSize(width: 16, height: 9) // Default aspect ratio
+    /// Source video's nominal frame rate. Defaults to 30 until the asset has been inspected.
+    @Published var sourceFrameRate: Float = 30.0
 
     init(url: URL) {
         let playerItem = AVPlayerItem(url: url)
@@ -204,6 +206,7 @@ class LoopingPlayerController: ObservableObject {
                 if let videoTrack = tracks?.first {
                     let size = try? await videoTrack.load(.naturalSize)
                     let transform = try? await videoTrack.load(.preferredTransform)
+                    let fps = try? await videoTrack.load(.nominalFrameRate)
 
                     if let naturalSize = size {
                         // Apply transform to get correct orientation
@@ -216,6 +219,7 @@ class LoopingPlayerController: ObservableObject {
                         }
                         await MainActor.run {
                             self.videoSize = correctedSize
+                            if let fps, fps > 0 { self.sourceFrameRate = fps }
                         }
                     }
                 }
