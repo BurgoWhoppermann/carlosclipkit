@@ -514,16 +514,18 @@ struct ManualTimelineView: View {
         }
     }
 
-    /// Re-anchor the visible window on its CURRENT centre when the zoom level changes — so
-    /// the content the user is looking at stays put under the cursor instead of jumping to
-    /// wherever the playhead happens to be.
+    /// Anchor zoom on the playhead's CURRENT screen-fraction position. If the playhead is
+    /// visible at 30% from the left, it stays at 30% from the left after zoom — the window
+    /// just shrinks/grows around it. If the playhead is offscreen, it stays offscreen at the
+    /// same proportional distance (no sudden snap into view, no jumpy jump-to-playhead).
     private func recenterOnZoomChange(from oldZoom: Double) {
         let oldVisible = max(0.01, duration / max(1, oldZoom))
-        // Compute pre-zoom centre using the OLD visible duration and the (still-unchanged) scrollTime.
-        let oldCenter = scrollTime + oldVisible / 2
         let newVisible = visibleDuration
-        // Pin that centre in the new window. clamp handles the edges.
-        scrollTime = max(0, min(max(0, duration - newVisible), oldCenter - newVisible / 2))
+        // Playhead's screen fraction in the OLD window. < 0 = offscreen left, in [0,1] = visible,
+        // > 1 = offscreen right. We preserve this fraction across the zoom change.
+        let f = (currentTime - scrollTime) / oldVisible
+        let newScrollTime = currentTime - f * newVisible
+        scrollTime = max(0, min(max(0, duration - newVisible), newScrollTime))
     }
 
     @ViewBuilder
