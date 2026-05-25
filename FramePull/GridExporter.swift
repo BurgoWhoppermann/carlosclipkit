@@ -84,7 +84,6 @@ final class GridExporter {
         guard config.filledCount > 0 else { throw GridExportError.emptyGrid }
         guard config.isComplete else { throw GridExportError.incompleteGrid }
 
-        let stillByID = Dictionary(uniqueKeysWithValues: markedStills.map { ($0.id, $0) })
         let clipByID = Dictionary(uniqueKeysWithValues: markedClips.map { ($0.id, $0) })
 
         // Resolve clip cells (sources we'll extract per-frame)
@@ -106,7 +105,7 @@ final class GridExporter {
         let asset = AVURLAsset(url: sourceVideoURL)
 
         // Pre-extract still frames once. They're reused for every output frame.
-        var stillImages = try await extractStaticCellImages(
+        let stillImages = try await extractStaticCellImages(
             cells: config.filledCells.filter { if case .still = $0 { return true } else { return false } },
             asset: asset,
             canvasSize: canvasSize,
