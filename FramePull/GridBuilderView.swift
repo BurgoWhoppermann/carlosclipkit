@@ -181,8 +181,10 @@ struct GridBuilderView: View {
                     Label("Auto Fill", systemImage: "wand.and.stars")
                 }
                 .buttonStyle(.bordered)
-                .disabled(grid.isComplete || approvedSources.isEmpty)
-                .help("Distribute approved items across empty slots — re-rolls each click")
+                .disabled(approvedSources.isEmpty)
+                .help(grid.isComplete
+                      ? "Re-roll the grid with a new random selection"
+                      : "Distribute approved items across empty slots — click again to re-roll")
 
                 Button {
                     var g = grid

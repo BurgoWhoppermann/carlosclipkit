@@ -563,37 +563,51 @@ class MarkingState: ObservableObject {
         recordUndo(.modifiedGrid(id: updated.id, previous: previous))
     }
 
-    /// Auto-fill a grid from the approved item pool, distributing evenly across the timeline.
-    /// Each click re-rolls: items are chosen randomly within chronological "buckets" so the
-    /// timeline coverage stays even but the specific picks change. Items used in OTHER grids
-    /// are excluded by default; if that empties the pool, fall back to allowing reuse from
-    /// other grids (still excludes items already in THIS grid).
+    /// Auto-fill a grid from the approved item pool. Behaviour:
+    /// - If the grid has empty slots, fill them (preserving any items already placed).
+    /// - If the grid is already complete, **clear it first** so the click re-rolls the whole
+    ///   selection from scratch.
+    /// - Excludes items used in OTHER grids by default. If that leaves the pool too small,
+    ///   falls back to allowing items from other grids (still excludes items already in THIS
+    ///   grid after the optional clear).
+    /// - Picks are randomised via shuffle (not bucketed) so every click produces a meaningfully
+    ///   different combination — even with small pools. The chosen items are then placed in
+    ///   chronological order across the available slots.
     func autoFill(gridID: UUID) {
         guard let index = grids.firstIndex(where: { $0.id == gridID }) else { return }
         var grid = grids[index]
+
+        // Re-roll: if the grid is already full, clear it so we can fill from scratch with a
+        // new random selection. Without this, the click would no-op (no empty slots).
+        if grid.isComplete {
+            grid.clearCells()
+        }
+
         let emptyIndices = grid.selectedCells.enumerated().compactMap { i, s in s == nil ? i : nil }
         guard !emptyIndices.isEmpty else { return }
 
-        // Build the pool with the strictest exclusion first: nothing already in any grid.
-        let usedAcrossAllGrids = Set(grids.flatMap { $0.filledCells })
-        var pool = candidatePool(excluding: usedAcrossAllGrids)
+        // Items already in this grid (manual placements survive a re-roll only when grid wasn't
+        // full to begin with — clearCells empties everything).
+        let usedInThisGrid = Set(grid.filledCells)
+        let usedInOtherGrids = Set(grids.filter { $0.id != gridID }.flatMap { $0.filledCells })
 
-        // If exclusion across grids leaves nothing usable, relax to "not in THIS grid only".
+        // Strictest: nothing already used in any grid.
+        var pool = candidatePool(excluding: usedInThisGrid.union(usedInOtherGrids))
+
+        // Fallback: allow reuse from other grids if the strict pool is too small.
         if pool.count < emptyIndices.count {
-            let usedInThisGrid = Set(grid.filledCells)
             pool = candidatePool(excluding: usedInThisGrid)
         }
         guard !pool.isEmpty else { return }
 
-        // Sort chronologically, then bucket the timeline into N slots and pick a random item
-        // from each bucket. Re-clicking re-rolls because the random pick changes.
-        pool.sort { $0.time < $1.time }
         let pickCount = min(emptyIndices.count, pool.count)
-        for i in 0..<pickCount {
-            let bucketStart = i * pool.count / pickCount
-            let bucketEnd = max(bucketStart + 1, (i + 1) * pool.count / pickCount)
-            let chosen = (bucketStart..<bucketEnd).randomElement() ?? bucketStart
-            grid.setCell(pool[chosen].source, at: emptyIndices[i])
+
+        // Shuffle for maximum re-roll variety; sort the picks by time so cells fill
+        // chronologically (slot 0 = earliest pick, slot N−1 = latest).
+        let chosen = Array(pool.shuffled().prefix(pickCount))
+            .sorted { $0.time < $1.time }
+        for (i, item) in chosen.enumerated() {
+            grid.setCell(item.source, at: emptyIndices[i])
         }
         updateGrid(grid)
     }
