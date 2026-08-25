@@ -1,0 +1,56 @@
+# xcodegen spec for the iOS/iPadOS target.
+#
+# Deliberately a SEPARATE project from FramePull.xcodeproj so the shipping macOS
+# project's signing, schemes, and Auto Build Number script are never touched.
+# Universal purchase keys off the bundle identifier and the App Store record, not
+# the project layout — so this shares de.carlooppermann.clipkit with the Mac app.
+#
+# Regenerate with:  xcodegen generate --spec project-ios.yml
+
+name: FramePull-iOS
+options:
+  bundleIdPrefix: de.carlooppermann
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+targets:
+  FramePull-iOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      # iOS-only UI
+      - path: FramePull-iOS
+      # Shared platform-neutral core — same files the macOS target compiles.
+      # Verified AppKit-free; the iOS build is what keeps them that way.
+      - path: FramePull/ExportSettings.swift
+      - path: FramePull/MarkingState.swift
+      - path: FramePull/GridModels.swift
+      - path: FramePull/ProcessingUtilities.swift
+      - path: FramePull/SceneDetector.swift
+      - path: FramePull/LUTProcessor.swift
+      - path: FramePull/GridExporter.swift
+      - path: FramePull/VideoProcessor.swift
+      - path: FramePull/VideoSnippetProcessor.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.carlooppermann.clipkit
+        # Pinned so `xcodegen generate` never clobbers the team set in Xcode.
+        DEVELOPMENT_TEAM: V7R6ZR7F9Q
+        CODE_SIGN_STYLE: Automatic
+        PRODUCT_NAME: FramePull
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"   # iPhone + iPad
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_CFBundleDisplayName: FramePull
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: FramePull reads videos from your library so you can pull stills and clips from them.
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: FramePull saves the stills, clips, and grids you export back to your library.
+        # Split per device family: iPad must declare all four orientations or
+        # Xcode warns (it assumes multitasking unless UIRequiresFullScreen is set).
+        # iPhone deliberately omits upside-down, which is the platform norm.
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
