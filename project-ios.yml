@@ -33,6 +33,28 @@ targets:
       - path: FramePull/GridExporter.swift
       - path: FramePull/VideoProcessor.swift
       - path: FramePull/VideoSnippetProcessor.swift
+    # Mirrors the macOS target's "Auto Build Number" phase, but against its own counter:
+    # iOS and macOS are separate version trains in App Store Connect, each needing its own
+    # increasing build numbers. Sharing one file would make a Mac archive jump the iOS
+    # number and vice versa. Without this the build number stays 1 and the SECOND upload
+    # is rejected as a duplicate.
+    postBuildScripts:
+      - name: Auto Build Number
+        basedOnDependencyAnalysis: false
+        script: |
+          BUILDNUM_FILE="${SRCROOT}/.buildnum-ios"
+          if [ "$ACTION" = "install" ]; then
+            cur=0
+            [ -f "$BUILDNUM_FILE" ] && cur=$(cat "$BUILDNUM_FILE")
+            next=$((cur + 1))
+            echo "$next" > "$BUILDNUM_FILE"
+            plist="${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}"
+            if [ -f "$plist" ]; then
+              /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $next" "$plist"
+              echo "iOS build number: $cur -> $next (archive)"
+            fi
+          fi
+
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: de.carlooppermann.clipkit
@@ -45,6 +67,11 @@ targets:
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"   # iPhone + iPad
         GENERATE_INFOPLIST_FILE: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # Declares no non-exempt encryption, so App Store Connect stops asking about
+        # export compliance on every single upload.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_CFBundleDisplayName: FramePull
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: FramePull reads videos from your library so you can pull stills and clips from them.

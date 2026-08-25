@@ -6,8 +6,9 @@ xcuserdata/
 *.xcuserstate
 DerivedData/
 
-# Build number counter (local to each machine)
+# Build number counters (local to each machine)
 .buildnum
+.buildnum-ios
 
 # Claude Code local settings
 .claude/
