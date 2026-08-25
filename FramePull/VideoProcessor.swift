@@ -1,6 +1,8 @@
 import Foundation
 import AVFoundation
-import AppKit
+import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
 import Vision
 
 class VideoProcessor {
@@ -121,21 +123,27 @@ class VideoProcessor {
         format: StillFormat = .jpeg,
         subdirectory: String = "stills"
     ) throws {
-        let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
-
-        let imageData: Data?
-        switch format {
-        case .jpeg:
-            imageData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.9])
-        case .png:
-            imageData = bitmapRep.representation(using: .png, properties: [:])
-        case .tiff:
-            imageData = bitmapRep.tiffRepresentation
-        }
-
-        guard let data = imageData else {
+        let encoded = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(
+            encoded as CFMutableData,
+            format.utType.identifier as CFString,
+            1,
+            nil
+        ) else {
             throw ProcessingError.cannotCreateImage
         }
+
+        // JPEG is the only format here that takes a quality knob; 0.9 matches the
+        // previous NSBitmapImageRep compressionFactor.
+        let props: [CFString: Any] = format == .jpeg
+            ? [kCGImageDestinationLossyCompressionQuality: 0.9]
+            : [:]
+        CGImageDestinationAddImage(dest, cgImage, props as CFDictionary)
+
+        guard CGImageDestinationFinalize(dest) else {
+            throw ProcessingError.cannotCreateImage
+        }
+        let data = encoded as Data
 
         // Save to the specified subdirectory (stills/, stills/4x5/, stills/9x16/)
         let stillsDir = ProcessingUtilities.ensureSubdirectory(outputDirectory, path: subdirectory)

@@ -1,6 +1,6 @@
 import Foundation
 import CoreImage
-import AppKit
+import CoreGraphics
 
 /// Parses .cube LUT files and applies color transformations via CIColorCubeWithColorSpace.
 /// Supports both 1D and 3D LUTs in the standard Adobe/Resolve .cube format.
