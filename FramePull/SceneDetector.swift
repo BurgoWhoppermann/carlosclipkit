@@ -1,7 +1,7 @@
 import Foundation
 @preconcurrency import AVFoundation
 import CoreImage
-import AppKit
+import CoreGraphics
 
 class SceneDetector: @unchecked Sendable {
 
@@ -27,6 +27,7 @@ class SceneDetector: @unchecked Sendable {
         case cannotGetDuration
         case cannotGenerateFrame(time: CMTime)
         case noScenesDetected
+        case detectionStalled(framesCompleted: Int, totalFrames: Int)
 
         var errorDescription: String? {
             switch self {
@@ -38,6 +39,8 @@ class SceneDetector: @unchecked Sendable {
                 return "Failed to extract frame at time \(CMTimeGetSeconds(time)) seconds for scene analysis."
             case .noScenesDetected:
                 return "No scenes could be detected in the video."
+            case .detectionStalled(let done, let total):
+                return "Scene detection stalled after \(done) of \(total) frames. Try again, or pause playback while it runs."
             }
         }
     }
@@ -48,15 +51,18 @@ class SceneDetector: @unchecked Sendable {
     /// sequential decode (no per-frame seek).
     /// - Parameters:
     ///   - asset: The video asset to analyze
-    ///   - threshold: Bhattacharyya distance threshold (0.0–1.0), higher = fewer cuts.
-    ///     Real cuts typically score 0.4–0.7, motion/lighting 0.05–0.25.
+    ///   - threshold: Mean per-block Bhattacharyya distance (0.0–1.0), higher = fewer cuts.
+    ///     Measured on 30s of real 25fps footage, cut count is flat at 16 across
+    ///     0.25–0.30 — that plateau means cuts and motion separate cleanly there, so the
+    ///     0.28 default sits in the middle of it. NOTE: this scale is not comparable to
+    ///     the pre-2026-08 global-histogram thresholds.
     ///   - minimumSceneDuration: Minimum duration for a scene in seconds (suppresses
     ///     multiple cuts inside the same transition fade)
     ///   - progress: Optional callback reporting fraction complete (0.0–1.0)
     /// - Returns: Array of timestamps where scene cuts were detected
     func detectSceneCuts(
         from asset: AVURLAsset,
-        threshold: Double = 0.35,
+        threshold: Double = 0.28,
         minimumSceneDuration: Double = 0.15,
         progress: ((Double) -> Void)? = nil
     ) async throws -> [Double] {
@@ -106,125 +112,165 @@ class SceneDetector: @unchecked Sendable {
         // optimize seeking across GOP boundaries instead of seeking from scratch per frame
         let timesAsValues = sampleTimes.map { NSValue(time: $0) }
 
-        // Collect results in order using a continuation
-        let cuts: [Double] = try await withCheckedThrowingContinuation { continuation in
-            var detectedCuts: [Double] = []
-            var lastCutTime: Double = 0.0
-            var previousHistogram: [Double]? = nil
-            var framesProcessed = 0
-            var cancelled = false
+        // Collect results using a continuation.
+        //
+        // The accumulator owns every piece of mutable state behind a lock. This used to
+        // be bare local vars mutated straight from the generator callback, which could
+        // hang forever: the continuation only resumed on an exact
+        // `framesProcessed == totalSamples` match, so a single lost increment — a racy
+        // callback, a frame the decoder failed to deliver under memory pressure, or the
+        // cancellation path returning before the counter bumped — meant it never resumed
+        // and detection appeared frozen.
+        let accumulator = DetectionAccumulator(
+            totalSamples: totalSamples,
+            threshold: threshold,
+            minimumSceneDuration: minimumSceneDuration,
+            detector: self
+        )
 
-            imageGenerator.generateCGImagesAsynchronously(forTimes: timesAsValues) { requestedTime, cgImage, actualTime, result, error in
-                // Check for cancellation
-                if Task.isCancelled {
-                    if !cancelled {
-                        cancelled = true
+        let cuts: [Double] = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                // Watchdog: if the generator stops delivering callbacks entirely, finish
+                // with whatever was found instead of waiting forever.
+                let watchdog = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+                watchdog.schedule(deadline: .now() + 30, repeating: 30)
+                watchdog.setEventHandler {
+                    guard accumulator.hasStalled() else { return }
+                    watchdog.cancel()
+                    imageGenerator.cancelAllCGImageGeneration()
+                    // Surface the stall instead of returning what we happened to have.
+                    // Partial cuts look exactly like a completed run, which silently
+                    // hides missing scene cuts — worse than an error the user can retry.
+                    if let progressed = accumulator.finishStalled() {
+                        continuation.resume(throwing: SceneDetectorError.detectionStalled(
+                            framesCompleted: progressed.completed,
+                            totalFrames: progressed.total
+                        ))
+                    }
+                }
+                watchdog.resume()
+
+                imageGenerator.generateCGImagesAsynchronously(forTimes: timesAsValues) {
+                    requestedTime, cgImage, actualTime, _, _ in
+
+                    if Task.isCancelled {
                         imageGenerator.cancelAllCGImageGeneration()
-                        continuation.resume(throwing: CancellationError())
-                    }
-                    return
-                }
-
-                framesProcessed += 1
-                // Use the ACTUAL decoded frame time (not requestedTime). With zero tolerance
-                // they're effectively equal, but actualTime reflects exactly which frame the
-                // decoder produced — guaranteed frame-aligned.
-                let sampleTime = CMTimeGetSeconds(actualTime)
-
-                if let image = cgImage {
-                    let currentHistogram = self.computeHistogram(for: image)
-
-                    if let prevHist = previousHistogram {
-                        let distance = self.bhattacharyyaDistance(prevHist, currentHistogram)
-                        if distance > threshold {
-                            if sampleTime - lastCutTime >= minimumSceneDuration {
-                                detectedCuts.append(sampleTime)
-                                lastCutTime = sampleTime
-                            }
+                        if accumulator.finishOnce() {
+                            watchdog.cancel()
+                            continuation.resume(throwing: CancellationError())
                         }
+                        return
                     }
-                    previousHistogram = currentHistogram
-                }
 
-                // Report progress (skip if cancelled to avoid stale updates)
-                if !Task.isCancelled, framesProcessed % 10 == 0 || framesProcessed == totalSamples {
-                    progress?(Double(framesProcessed) / Double(totalSamples))
-                }
+                    // Counts the callback even when cgImage is nil, so a frame the decoder
+                    // could not produce can never stall the run. The index is derived from
+                    // requestedTime rather than arrival order — see DetectionAccumulator.
+                    let index = Int((CMTimeGetSeconds(requestedTime) / frameInterval).rounded())
+                    let step = accumulator.consume(index: index, image: cgImage, actualTime: actualTime)
 
-                // Last frame — return results
-                if framesProcessed == totalSamples {
-                    continuation.resume(returning: detectedCuts.sorted())
+                    if let fraction = step.progressFraction {
+                        progress?(fraction)
+                    }
+
+                    if let result = step.finishedCuts {
+                        watchdog.cancel()
+                        continuation.resume(returning: result)
+                    }
                 }
             }
+        } onCancel: {
+            imageGenerator.cancelAllCGImageGeneration()
         }
 
         return cuts
     }
 
-    /// Compute a normalized 512-bin color histogram from a CGImage
-    /// Uses 8x8x8 RGB bins via a 96x96 downsampled context for speed
-    /// - Parameter image: Source CGImage
-    /// - Returns: Normalized histogram array (512 bins, sums to 1.0)
+    // Spatial histogram layout. A single global colour histogram cannot tell a cut
+    // between two shots of the same location apart from ordinary motion — both leave the
+    // overall colour mix intact. Splitting the frame into a grid and comparing blocks
+    // catches the reframing that a cut always brings.
+    //
+    // 96x96 downsample / 3 = 32x32 px blocks, 4 bins per channel = 64 bins per block,
+    // 9 blocks = 576 doubles, comparable in size to the old 512-bin global histogram.
+    static let gridDivisions = 3
+    static let binsPerChannel = 4
+    static let binsPerBlock = binsPerChannel * binsPerChannel * binsPerChannel
+    static let blockCount = gridDivisions * gridDivisions
+
+    /// Compute per-block RGB histograms from a CGImage, concatenated into one array.
+    /// - Returns: `blockCount * binsPerBlock` values; each block's slice sums to 1.0.
     func computeHistogram(for image: CGImage) -> [Double] {
         let downsampleSize = 96
-        
+
         histogramContextLock.lock()
         defer { histogramContextLock.unlock() }
 
         guard let context = reusedHistogramContext,
               let data = context.data else {
-            return [Double](repeating: 0.0, count: 512)
+            return [Double](repeating: 0.0, count: Self.blockCount * Self.binsPerBlock)
         }
 
-        // Draw image into the pre-allocated context
         context.draw(image, in: CGRect(x: 0, y: 0, width: downsampleSize, height: downsampleSize))
-
-        let pixelCount = downsampleSize * downsampleSize
-        return computeColorHistogram(data: data, pixelCount: pixelCount)
+        return computeBlockHistograms(data: data, size: downsampleSize)
     }
 
-    /// Compute an 8x8x8 RGB color histogram (512 bins) from pixel data
-    private func computeColorHistogram(data: UnsafeMutableRawPointer, pixelCount: Int) -> [Double] {
-        let binsPerChannel = 8
-        let totalBins = binsPerChannel * binsPerChannel * binsPerChannel  // 512
-        var histogram = [Double](repeating: 0.0, count: totalBins)
-        let bytes = data.bindMemory(to: UInt8.self, capacity: pixelCount * 4)
+    /// Build one normalized histogram per grid block.
+    private func computeBlockHistograms(data: UnsafeMutableRawPointer, size: Int) -> [Double] {
+        let divisions = Self.gridDivisions
+        let bins = Self.binsPerChannel
+        let binsPerBlock = Self.binsPerBlock
+        let blockSize = size / divisions
 
-        for i in 0..<pixelCount {
-            let offset = i * 4
-            let rBin = Int(bytes[offset]) * binsPerChannel / 256
-            let gBin = Int(bytes[offset + 1]) * binsPerChannel / 256
-            let bBin = Int(bytes[offset + 2]) * binsPerChannel / 256
-            let binIndex = rBin * binsPerChannel * binsPerChannel + gBin * binsPerChannel + bBin
-            histogram[binIndex] += 1.0
+        var histograms = [Double](repeating: 0.0, count: Self.blockCount * binsPerBlock)
+        let bytes = data.bindMemory(to: UInt8.self, capacity: size * size * 4)
+
+        for y in 0..<size {
+            let blockRow = min(y / blockSize, divisions - 1)
+            for x in 0..<size {
+                let blockCol = min(x / blockSize, divisions - 1)
+                let block = blockRow * divisions + blockCol
+
+                let offset = (y * size + x) * 4
+                let rBin = Int(bytes[offset]) * bins / 256
+                let gBin = Int(bytes[offset + 1]) * bins / 256
+                let bBin = Int(bytes[offset + 2]) * bins / 256
+
+                let binIndex = rBin * bins * bins + gBin * bins + bBin
+                histograms[block * binsPerBlock + binIndex] += 1.0
+            }
         }
 
-        // Normalize to sum to 1.0
-        let total = Double(pixelCount)
-        for i in 0..<totalBins {
-            histogram[i] /= total
+        // Normalize each block independently so blocks are comparable to each other.
+        let pixelsPerBlock = Double(blockSize * blockSize)
+        for i in 0..<histograms.count {
+            histograms[i] /= pixelsPerBlock
         }
-
-        return histogram
+        return histograms
     }
 
-    /// Compute Bhattacharyya distance between two normalized histograms
-    /// Returns 0.0 (identical) to 1.0 (no overlap)
-    private func bhattacharyyaDistance(_ h1: [Double], _ h2: [Double]) -> Double {
-        var bcCoefficient = 0.0
-        for i in 0..<h1.count {
-            bcCoefficient += sqrt(h1[i] * h2[i])
+    /// Distance between two frames, as the mean Bhattacharyya distance across grid blocks.
+    ///
+    /// The mean is what separates a cut from motion. A cut reframes everything, so nearly
+    /// every block changes and the mean stays high. A person crossing the frame disturbs
+    /// one or two blocks, which the mean dilutes. Taking the max instead would fire on any
+    /// local movement; a global histogram would miss cuts inside one location.
+    fileprivate func frameDistance(_ h1: [Double], _ h2: [Double]) -> Double {
+        let binsPerBlock = Self.binsPerBlock
+        let blocks = min(h1.count, h2.count) / binsPerBlock
+        guard blocks > 0 else { return 0 }
+
+        var total = 0.0
+        for block in 0..<blocks {
+            let start = block * binsPerBlock
+            var bcCoefficient = 0.0
+            for i in start..<(start + binsPerBlock) {
+                bcCoefficient += sqrt(h1[i] * h2[i])
+            }
+            total += sqrt(max(0.0, 1.0 - min(1.0, bcCoefficient)))
         }
-        // Clamp to [0,1] to handle floating point imprecision
-        let distance = sqrt(max(0.0, 1.0 - bcCoefficient))
-        return min(1.0, distance)
+        return total / Double(blocks)
     }
 
-    /// Divide video into scene ranges based on detected cuts
-    /// - Parameters:
-    ///   - cuts: Array of cut timestamps
-    ///   - videoDuration: Total video duration in seconds
-    /// - Returns: Array of scene ranges as (start, end) tuples
     func getSceneRanges(cuts: [Double], videoDuration: Double) -> [(start: Double, end: Double)] {
         var ranges: [(start: Double, end: Double)] = []
         var previousCut = 0.0
@@ -577,5 +623,118 @@ class SceneDetector: @unchecked Sendable {
         }
 
         return timestamps
+    }
+}
+
+
+// MARK: - Detection accumulator
+
+/// Serialises every piece of per-frame state touched by the image generator's callback
+/// and guarantees the continuation is resumed exactly once.
+private final class DetectionAccumulator: @unchecked Sendable {
+    private let lock = NSLock()
+    private let totalSamples: Int
+    private let threshold: Double
+    private let minimumSceneDuration: Double
+    private unowned let detector: SceneDetector
+
+    private struct Frame {
+        let histogram: [Double]?
+        let time: Double
+    }
+
+    private var cuts: [Double] = []
+    private var lastCutTime: Double = 0
+    private var previousHistogram: [Double]?
+    private var pending: [Int: Frame] = [:]
+    private var nextIndex = 0
+    private var framesProcessed = 0
+    private var framesAtLastCheck = -1
+    private var finished = false
+
+    struct Step {
+        var progressFraction: Double?
+        var finishedCuts: [Double]?
+    }
+
+    init(totalSamples: Int, threshold: Double, minimumSceneDuration: Double, detector: SceneDetector) {
+        self.totalSamples = totalSamples
+        self.threshold = threshold
+        self.minimumSceneDuration = minimumSceneDuration
+        self.detector = detector
+    }
+
+    /// Frames are compared strictly in timeline order.
+    ///
+    /// generateCGImagesAsynchronously does not guarantee the handler fires in the order
+    /// the times were requested, and histogram comparison is inherently sequential — a
+    /// frame is only meaningful against the one before it. Comparing in arrival order
+    /// silently corrupts the result (it dropped a 3-cut clip to 1 cut). So each frame is
+    /// filed under its own index and the queue is drained in order; out-of-order arrivals
+    /// wait in `pending`, which stays small because the generator decodes broadly forward.
+    func consume(index: Int, image: CGImage?, actualTime: CMTime) -> Step {
+        // Histogram work stays outside the lock — it's the expensive part and needs
+        // nothing shared.
+        let histogram = image.map { detector.computeHistogram(for: $0) }
+        let sampleTime = CMTimeGetSeconds(actualTime)
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        framesProcessed += 1
+        pending[index] = Frame(histogram: histogram, time: sampleTime)
+
+        // Drain every frame that is now contiguous with what we've already compared.
+        while let frame = pending.removeValue(forKey: nextIndex) {
+            nextIndex += 1
+            guard let histogram = frame.histogram else { continue }
+
+            if let previous = previousHistogram {
+                let distance = detector.frameDistance(previous, histogram)
+                if distance > threshold, frame.time - lastCutTime >= minimumSceneDuration {
+                    cuts.append(frame.time)
+                    lastCutTime = frame.time
+                }
+            }
+            previousHistogram = histogram
+        }
+
+        var step = Step()
+        if framesProcessed % 10 == 0 || framesProcessed >= totalSamples {
+            step.progressFraction = min(1, Double(framesProcessed) / Double(totalSamples))
+        }
+        // `>=` rather than `==`: an exact match is too fragile to hang a whole import on.
+        if framesProcessed >= totalSamples, !finished {
+            finished = true
+            step.finishedCuts = cuts.sorted()
+        }
+        return step
+    }
+
+    /// True when no callback has arrived since the previous watchdog tick.
+    func hasStalled() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if finished { return false }
+        let stalled = framesProcessed == framesAtLastCheck
+        framesAtLastCheck = framesProcessed
+        return stalled
+    }
+
+    /// Report how far the run got before the generator went quiet.
+    func finishStalled() -> (completed: Int, total: Int)? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !finished else { return nil }
+        finished = true
+        return (framesProcessed, totalSamples)
+    }
+
+    func finishOnce() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !finished else { return false }
+        finished = true
+        return true
     }
 }
