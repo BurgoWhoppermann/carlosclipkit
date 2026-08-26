@@ -36,6 +36,7 @@ struct MarkingView: View {
     @State private var zoomLevel: Double = 1
     @State private var showingList = false
     @State private var showingExport = false
+    @State private var showingGrids = false
     @State private var showingReview = false
     @State private var showingAutoDialog = false
     @AppStorage("detectionSensitivity") private var sensitivity: DetectionSensitivity = .medium
@@ -77,6 +78,15 @@ struct MarkingView: View {
         .fullScreenCover(isPresented: $showingReview) {
             if let videoURL {
                 ReviewSwipeView(
+                    markingState: markingState,
+                    videoURL: videoURL,
+                    onExport: { showingExport = true }
+                )
+            }
+        }
+        .sheet(isPresented: $showingGrids) {
+            if let videoURL {
+                GridComposerView(
                     markingState: markingState,
                     videoURL: videoURL,
                     onExport: { showingExport = true }
@@ -173,6 +183,15 @@ struct MarkingView: View {
             ) { showingReview = true }
 
             actionBarButton(
+                title: "Grids",
+                subtitle: gridSubtitle,
+                systemImage: "square.grid.2x2",
+                tint: Color.framePullBlue,
+                prominent: false,
+                enabled: markedCount > 0
+            ) { showingGrids = true }
+
+            actionBarButton(
                 title: "Export",
                 subtitle: markedCount > 0 ? "\(markedCount) kept" : "nothing kept",
                 systemImage: "square.and.arrow.up",
@@ -227,6 +246,13 @@ struct MarkingView: View {
             Label("Export", systemImage: "square.and.arrow.up")
         }
         .disabled(markedCount == 0)
+    }
+
+    private var gridSubtitle: String {
+        let done = markingState.completedGrids.count
+        let total = markingState.grids.count
+        if total == 0 { return "none yet" }
+        return "\(done)/\(total) ready"
     }
 
     private var markedCount: Int {

@@ -75,7 +75,7 @@ The Process timeline at the top is bidirectional — jump between phases freely.
 | **Multi-lane clips** | Overlapping clip ranges stack on separate lanes |
 | **Aspect ratio crops** | Export 4:5 and 9:16 variants alongside originals, with per-clip reframe control |
 | **Fullscreen-friendly** | Resizable window, content scales with available space |
-| **iPhone & iPad** | Touch marking, swipe review, export to Photos or Files. Grids and LUTs are Mac-only for now |
+| **iPhone & iPad** | Touch marking, swipe review, grid composer, export to Photos or Files. LUTs are Mac-only for now |
 
 ## Built with
 

@@ -30,6 +30,7 @@ struct ExportSheet: View {
                 destinationSection
                 if stillCount > 0 { stillsSection }
                 if clipCount > 0 { clipsSection }
+                if gridCount > 0 { gridSection }
                 if stillCount > 0 || clipCount > 0 { cropSection }
             }
             .navigationTitle("Export")
@@ -64,6 +65,7 @@ struct ExportSheet: View {
             HStack(spacing: 18) {
                 Label("\(stillCount)", systemImage: "camera")
                 Label("\(clipCount)", systemImage: "film")
+                if gridCount > 0 { Label("\(gridCount)", systemImage: "square.grid.2x2") }
                 Spacer()
             }
             .font(.title3)
@@ -133,6 +135,22 @@ struct ExportSheet: View {
         }
     }
 
+    private var gridCount: Int { markingState.completedGrids.count }
+
+    private var gridSection: some View {
+        Section {
+            Toggle("Export grids", isOn: $options.exportGrids)
+            if options.exportGrids {
+                LabeledContent("Ready to render", value: "\(gridCount)")
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Grids")
+        } footer: {
+            Text("Only grids with every cell filled are exported. All-still grids render as JPEG; anything containing a clip renders as MP4.")
+        }
+    }
+
     private var cropSection: some View {
         Section {
             Toggle("Also export 4:5", isOn: $options.export4x5)
@@ -199,6 +217,7 @@ struct ExportSheet: View {
     private var hasSomethingToExport: Bool {
         let stills = options.exportStills && stillCount > 0
         let clips = (options.exportClips || options.exportGIF) && clipCount > 0
-        return stills || clips
+        let grids = options.exportGrids && gridCount > 0
+        return stills || clips || grids
     }
 }

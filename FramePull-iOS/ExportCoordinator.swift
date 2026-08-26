@@ -51,6 +51,8 @@ struct MobileExportOptions {
 
     var export4x5 = false
     var export9x16 = false
+
+    var exportGrids = true
 }
 
 @MainActor
@@ -141,9 +143,11 @@ final class ExportCoordinator: ObservableObject {
         let stills = markingState.approvedStills
         let clips = markingState.approvedClips
 
+        let grids = options.exportGrids ? markingState.completedGrids : []
+
         let stillUnits = options.exportStills ? stills.count : 0
         let clipUnits  = (options.exportClips || options.exportGIF) ? clips.count : 0
-        let totalUnits = max(1, stillUnits + clipUnits)
+        let totalUnits = max(1, stillUnits + clipUnits + grids.count)
         var done = 0
 
         if options.exportStills, !stills.isEmpty {
@@ -196,6 +200,46 @@ final class ExportCoordinator: ObservableObject {
                 done += 1
                 progress = Double(done) / Double(totalUnits)
             }
+        }
+
+        guard !grids.isEmpty else { return }
+
+        // Same shared GridExporter the Mac uses, so the crop maths and the WYSIWYG
+        // guarantee are identical across platforms.
+        let gridExporter = GridExporter()
+        let gridsDir = ProcessingUtilities.ensureSubdirectory(workDir, path: "grids")
+        let baseName = videoURL.deletingPathExtension().lastPathComponent
+        let frameRate = Int32(max(1, markingState.sourceFrameRate.rounded()))
+
+        for (index, grid) in grids.enumerated() {
+            try Task.checkCancellation()
+            status = "Rendering grid \(index + 1) of \(grids.count)…"
+
+            let isVideo = grid.containsClip
+            let name = String(format: "%@_grid_%03d.%@", baseName, index + 1, isVideo ? "mp4" : "jpg")
+            let url = gridsDir.appendingPathComponent(name)
+
+            if isVideo {
+                try await gridExporter.exportVideoGrid(
+                    config: grid,
+                    sourceVideoURL: videoURL,
+                    markedStills: markingState.markedStills,
+                    markedClips: markingState.markedClips,
+                    outputURL: url,
+                    frameRate: frameRate
+                )
+            } else {
+                try await gridExporter.exportImageGrid(
+                    config: grid,
+                    sourceVideoURL: videoURL,
+                    markedStills: markingState.markedStills,
+                    markedClips: markingState.markedClips,
+                    outputURL: url
+                )
+            }
+
+            done += 1
+            progress = Double(done) / Double(totalUnits)
         }
     }
 
