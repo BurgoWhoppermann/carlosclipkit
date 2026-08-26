@@ -255,6 +255,13 @@ Output folder access uses `startAccessingSecurityScopedResource()` / `stopAccess
 
 ## Tricky bits worth knowing
 
+- **Never hardcode a frame rate on an `AVMutableVideoComposition`.** `frameDuration`
+  resamples: a fixed 1/30 turns 25fps footage into 30fps by duplicating five frames a
+  second. Measured on a 3s 25fps clip, the old crop path emitted 90 frames with 12
+  duplicates in a regular pattern; matching the source emits 75 with none. Duplicates
+  are invisible on static shots and obvious judder on movement, which is why only some
+  exports looked wrong — always the same parts. Use `track.minFrameDuration` (exact for
+  NTSC rates like 29.97 = 1001/30000, which `1/Float` cannot express).
 - **Never scrub with `.positiveInfinity` seek tolerance.** It lands on the nearest
   *keyframe*. On all-intra footage (ProRes) every frame is a keyframe so it looks
   perfect, but on long-GOP H.264 the nearest keyframe can be half a second away.

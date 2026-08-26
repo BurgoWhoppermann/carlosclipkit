@@ -387,6 +387,18 @@ class VideoSnippetProcessor {
     }
 
     /// Export a cropped video clip with specified aspect ratio
+    /// The source track's exact frame duration, for video compositions that must not
+    /// resample. Falls back to the nominal rate, then to 30fps.
+    private func sourceFrameDuration(of track: AVAssetTrack) async throws -> CMTime {
+        if let minimum = try? await track.load(.minFrameDuration),
+           minimum.isValid, minimum.seconds > 0 {
+            return minimum
+        }
+        let nominal = (try? await track.load(.nominalFrameRate)) ?? 30
+        let fps = nominal > 0 ? nominal : 30
+        return CMTime(value: 1, timescale: CMTimeScale(fps.rounded()))
+    }
+
     private func exportCroppedClip(
         from asset: AVURLAsset,
         startTime: Double,
@@ -471,7 +483,16 @@ class VideoSnippetProcessor {
 
         videoComposition.instructions = [instruction]
         videoComposition.renderSize = CGSize(width: cropRect.width, height: cropRect.height)
-        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+        // Match the source's own frame timing.
+        //
+        // This was hardcoded to 1/30, which resampled every source that wasn't 30fps:
+        // a 25fps clip became 30fps by duplicating five frames per second. That is
+        // invisible on a locked-off shot and reads as judder the moment anything moves,
+        // which is why only some exports looked wrong — and always the same parts.
+        //
+        // minFrameDuration rather than 1/nominalFrameRate: it is exact for NTSC rates
+        // (29.97 is 1001/30000), which a Float reciprocal cannot represent.
+        videoComposition.frameDuration = try await sourceFrameDuration(of: videoTrack)
 
         guard let exportSession = AVAssetExportSession(
             asset: composition,

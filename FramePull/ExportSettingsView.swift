@@ -708,6 +708,9 @@ struct ExportSettingsView: View {
                         markedStills: allMarkedStills,
                         markedClips: allMarkedClips,
                         outputURL: outFile,
+                        // Render at the source rate. The 30fps default resampled 25fps
+                        // footage by duplicating frames, which judders on movement.
+                        frameRate: Int32(max(1, appState.markingState.sourceFrameRate.rounded())),
                         lutCubeDimension: appState.lutEnabled ? appState.lutCubeDimension : nil,
                         lutCubeData: appState.lutCubeData,
                         progressHandler: { sub in
