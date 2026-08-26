@@ -64,6 +64,9 @@ final class ExportCoordinator: ObservableObject {
     /// Set once rendering finishes and the user still has to choose a folder.
     @Published var pendingFilesDelivery: URL?
 
+    /// Source video name, so a Files delivery can name its folder after it.
+    private var sourceName = "Export"
+
     private var task: Task<Void, Never>?
 
     func cancel() {
@@ -80,6 +83,7 @@ final class ExportCoordinator: ObservableObject {
         destination: ExportDestination
     ) {
         guard !isExporting else { return }
+        sourceName = videoURL.deletingPathExtension().lastPathComponent
         isExporting = true
         progress = 0
         errorMessage = nil
@@ -239,8 +243,12 @@ final class ExportCoordinator: ObservableObject {
         defer { if scoped { destination.stopAccessingSecurityScopedResource() } }
 
         do {
-            let root = destination.appendingPathComponent("FramePull Export \(timestampSuffix())")
-            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            // Same layout as macOS: one folder per source video, reused on repeat
+            // exports, rather than a new dated folder every time.
+            let root = ProcessingUtilities.ensureExportRoot(
+                in: destination,
+                videoName: sourceName
+            )
 
             var copied = 0
             for source in filesRecursively(in: workDir) {
@@ -259,12 +267,6 @@ final class ExportCoordinator: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
-    }
-
-    private func timestampSuffix() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HHmm"
-        return formatter.string(from: Date())
     }
 
     private func filesRecursively(in directory: URL) -> [URL] {

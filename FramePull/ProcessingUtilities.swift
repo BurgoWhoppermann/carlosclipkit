@@ -13,6 +13,38 @@ enum ProcessingUtilities {
 
     /// Find the next available file index in a directory.
     /// Scans for files matching pattern like "videoname_still_001.jpg" and returns the next number.
+    /// Per-video export root: `<chosen folder>/FramePull_<video name>/`.
+    ///
+    /// Exports used to drop stills/, gifs/, videos/ and grids/ straight into whatever
+    /// folder the user picked, which quietly littered a Desktop or Movies folder and gave
+    /// no clue which video the output came from. Everything now lands inside one folder
+    /// named after the source.
+    ///
+    /// Idempotent on purpose: exporting the same video again reuses the folder rather
+    /// than making a second one, and the existing per-file index scan then continues the
+    /// numbering instead of restarting it.
+    static func ensureExportRoot(in base: URL, videoName: String) -> URL {
+        let folder = base.appendingPathComponent("FramePull_\(sanitizedFolderName(videoName))", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    /// Strips what a file name may contain but a folder name should not.
+    static func sanitizedFolderName(_ raw: String) -> String {
+        // ":" and "/" are the two characters that actually break paths on macOS, and a
+        // leading "." would hide the folder.
+        var name = raw
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        while name.hasPrefix(".") { name.removeFirst() }
+        if name.isEmpty { name = "Export" }
+
+        // Keep well clear of the 255-byte per-component limit once the prefix is added.
+        return String(name.prefix(120))
+    }
+
     static func findNextAvailableIndex(in directory: URL, prefix: String, suffix: String) -> Int {
         let fileManager = FileManager.default
 

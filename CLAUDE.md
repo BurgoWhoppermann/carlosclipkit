@@ -197,25 +197,34 @@ Click "Process" → ProcessSheet
 
 ## Export Output Structure
 
+Everything for one source video lands in a single `FramePull_<video name>/` folder
+inside the chosen destination, created by `ProcessingUtilities.ensureExportRoot`.
+Re-exporting the same video reuses that folder rather than making a second one, and
+`findNextAvailableIndex` then continues the numbering instead of restarting it.
+
 ```
-<output folder>/
-├── stills/
-│   ├── videoname_still_001.jpg
-│   ├── 4x5/videoname_still_001.jpg   (if export4x5 enabled)
-│   └── 9x16/videoname_still_001.jpg  (if export9x16 enabled)
-├── gifs/
-│   ├── videoname_clip_001.gif
-│   ├── 4x5/videoname_clip_001.gif
-│   └── 9x16/videoname_clip_001.gif
-├── videos/
-│   ├── videoname_clip_001.mp4
-│   ├── 4x5/videoname_clip_001.mp4
-│   └── 9x16/videoname_clip_001.mp4
-└── grids/
-    ├── videoname_grid_001.jpg   (all-still grid)
-    ├── videoname_grid_002.mp4   (any clip → MP4 via frame-by-frame compositor)
-    └── ...
+<chosen folder>/
+└── FramePull_videoname/
+    ├── stills/
+    │   ├── videoname_still_001.jpg
+    │   ├── 4x5/videoname_still_001.jpg   (if export4x5 enabled)
+    │   └── 9x16/videoname_still_001.jpg  (if export9x16 enabled)
+    ├── gifs/
+    │   ├── videoname_clip_001.gif
+    │   ├── 4x5/videoname_clip_001.gif
+    │   └── 9x16/videoname_clip_001.gif
+    ├── videos/
+    │   ├── videoname_clip_001.mp4
+    │   ├── 4x5/videoname_clip_001.mp4
+    │   └── 9x16/videoname_clip_001.mp4
+    └── grids/
+        ├── videoname_grid_001.jpg   (all-still grid)
+        ├── videoname_grid_002.mp4   (any clip → MP4 via frame-by-frame compositor)
+        └── ...
 ```
+
+On iOS the Files destination uses the same layout and the same folder name; the Photos
+destination is necessarily flat, since Photos has no folders.
 
 Mixed `.jpg` and `.mp4` grids share one numbering sequence (`nextGridIndex` checks both extensions).
 

@@ -567,7 +567,14 @@ struct ExportSettingsView: View {
             defer { if didStart { outputDir.stopAccessingSecurityScopedResource() } }
 
             do {
-                try await exportManual(to: outputDir)
+                // Everything for this video goes in one folder inside the chosen
+                // destination, so repeat exports collect together instead of scattering
+                // stills/, gifs/ and videos/ across the parent.
+                let exportRoot = ProcessingUtilities.ensureExportRoot(
+                    in: outputDir,
+                    videoName: videoURL.deletingPathExtension().lastPathComponent
+                )
+                try await exportManual(to: exportRoot)
 
                 await MainActor.run {
                     isExporting = false
