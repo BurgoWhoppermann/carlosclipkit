@@ -29,6 +29,32 @@ struct GridComposerView: View {
     @State private var activeGridID: UUID?
     @State private var selectedSlot: Int?
 
+    // Gesture sessions. Each records the transform as it was when the gesture began, so
+    // deltas are applied to a fixed base instead of compounding on every change event.
+    @State private var panStart: [GridCellSource: CellTransform] = [:]
+    @State private var zoomStart: [GridCellSource: CGFloat] = [:]
+
+    // Hold-and-drag swap.
+    //
+    // @GestureState, not @State: SwiftUI resets it automatically when the gesture ends OR
+    // is cancelled. With plain @State a long press that never became a drag left the cell
+    // stuck at 0.25 opacity with a stray drop-target border, and — because panning is
+    // guarded on "no swap in progress" — reframing stopped working entirely.
+    struct SwapSession: Equatable {
+        var slot: Int
+        var point: CGPoint?
+    }
+
+    @GestureState private var swapSession: SwapSession?
+    @State private var lastCanvasSize: CGSize?
+
+    private var draggingSlot: Int? { swapSession?.slot }
+
+    private func dropTarget(in grid: GridConfig) -> Int? {
+        guard let point = swapSession?.point, let size = lastCanvasSize else { return nil }
+        return slot(at: point, grid: grid, canvasSize: size)
+    }
+
     private var grids: [GridConfig] { markingState.grids }
 
     private var activeGrid: GridConfig? {
@@ -43,6 +69,7 @@ struct GridComposerView: View {
                     gridTabs
                     settingsRow(grid: grid)
                     canvas(grid: grid)
+                    selectedCellBar(grid: grid)
                     actionRow(grid: grid)
                     sourceStrip(grid: grid)
                 } else {
@@ -194,18 +221,50 @@ struct GridComposerView: View {
             let canvasSize = fittedSize(ratio: grid.ratio, in: geo.size)
             ZStack(alignment: .topLeading) {
                 Rectangle().fill(Color.black)
+
                 ForEach(0..<grid.layout.slots, id: \.self) { slot in
                     let rect = grid.cellRect(index: slot, in: canvasSize)
                     cell(grid: grid, slot: slot, rect: rect)
                         .frame(width: rect.width, height: rect.height)
                         .offset(x: rect.minX, y: rect.minY)
+                        // The lifted cell is drawn again on top, so hide the original.
+                        .opacity(draggingSlot == slot ? 0.25 : 1)
+                        .overlay {
+                            if dropTarget(in: grid) == slot && draggingSlot != slot {
+                                Rectangle().strokeBorder(Color.framePullAmber, lineWidth: 3)
+                            }
+                        }
+                }
+
+                // Lifted cell follows the finger.
+                if let session = swapSession, let point = session.point {
+                    let rect = grid.cellRect(index: session.slot, in: canvasSize)
+                    cell(grid: grid, slot: session.slot, rect: rect)
+                        .frame(width: rect.width, height: rect.height)
+                        .scaleEffect(1.06)
+                        .shadow(color: .black.opacity(0.5), radius: 12)
+                        .position(point)
+                        .allowsHitTesting(false)
+                        .zIndex(10)
                 }
             }
             .frame(width: canvasSize.width, height: canvasSize.height)
+            .coordinateSpace(name: canvasSpace)
+            .onAppear { lastCanvasSize = canvasSize }
+            .onChange(of: canvasSize) { lastCanvasSize = $0 }
             .clipped()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(.horizontal, 12)
+    }
+
+    private let canvasSpace = "gridCanvas"
+
+    /// Slot whose cell rect contains `point`, for drop targeting.
+    private func slot(at point: CGPoint, grid: GridConfig, canvasSize: CGSize) -> Int? {
+        (0..<grid.layout.slots).first {
+            grid.cellRect(index: $0, in: canvasSize).contains(point)
+        }
     }
 
     private func fittedSize(ratio: OutputRatio, in available: CGSize) -> CGSize {
@@ -241,17 +300,10 @@ struct GridComposerView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture { selectedSlot = (selectedSlot == slot) ? nil : slot }
-        .gesture(source == nil ? nil : panGesture(grid: grid, source: source!, rect: rect))
-        .gesture(source == nil ? nil : zoomGesture(grid: grid, source: source!))
-        .contextMenu {
-            if let source {
-                Button("Reset crop") { updateTransform(grid: grid, source: source) { $0 = .identity } }
-                if case .clip = source {
-                    Button("Loop ×\(nextLoop(grid: grid, source: source))") { cycleLoop(grid: grid, source: source) }
-                }
-                Button("Remove from grid", role: .destructive) { setCell(nil, at: slot, on: grid) }
-            }
-        }
+        // Hold to lift a cell out for swapping; move straight away to reframe instead.
+        .gesture(source == nil ? nil : swapGesture(grid: grid, slot: slot))
+        .simultaneousGesture(source == nil ? nil : panGesture(grid: grid, source: source!, rect: rect))
+        .simultaneousGesture(source == nil ? nil : zoomGesture(grid: grid, source: source!))
     }
 
     @ViewBuilder
@@ -290,34 +342,170 @@ struct GridComposerView: View {
 
     // MARK: - Cell gestures
 
+    /// Pan that tracks the finger exactly.
+    ///
+    /// `value.translation` is the total movement since the gesture began, not an
+    /// increment — adding it every change event compounded the offset and made dragging
+    /// feel disconnected. The transform is now captured once at gesture start and the
+    /// translation applied to that base.
+    ///
+    /// Pixels convert to the normalised offset via the same slack drawRect uses:
+    /// offset ±1 corresponds to (scaledSize − cellSize) / 2 pixels. Divide by that and the
+    /// image moves precisely as far as the finger does.
     private func panGesture(grid: GridConfig, source: GridCellSource, rect: CGRect) -> some Gesture {
         DragGesture(minimumDistance: 4)
             .onChanged { value in
+                guard draggingSlot == nil else { return }   // a swap is in progress
+
+                let base = panStart[source] ?? grid.transform(for: source)
+                if panStart[source] == nil { panStart[source] = base }
+
+                guard let srcSize = thumbnail(for: source)?.size, srcSize.width > 0 else { return }
+                let slack = panSlack(scale: base.scale, srcSize: srcSize, cellSize: rect.size)
+
                 updateTransform(grid: grid, source: source) { t in
-                    // Translation is normalised against the cell, so the image tracks the
-                    // finger at any zoom level.
-                    t.offsetX = clampUnit(t.offsetX + (value.translation.width / max(rect.width, 1)) * 0.6)
-                    t.offsetY = clampUnit(t.offsetY + (value.translation.height / max(rect.height, 1)) * 0.6)
+                    // No slack on an axis means the image exactly fills it; nothing to pan.
+                    if slack.width > 0 {
+                        t.offsetX = clampUnit(base.offsetX + value.translation.width / slack.width)
+                    }
+                    if slack.height > 0 {
+                        t.offsetY = clampUnit(base.offsetY + value.translation.height / slack.height)
+                    }
                 }
             }
+            .onEnded { _ in panStart[source] = nil }
+    }
+
+    /// Pannable slack in points, mirroring drawRect's maxPanX / maxPanY.
+    private func panSlack(scale: CGFloat, srcSize: CGSize, cellSize: CGSize) -> CGSize {
+        let baseScale = max(cellSize.width / srcSize.width, cellSize.height / srcSize.height)
+        let s = max(1, min(4, scale))
+        return CGSize(
+            width:  max(0, (srcSize.width  * baseScale * s - cellSize.width)  / 2),
+            height: max(0, (srcSize.height * baseScale * s - cellSize.height) / 2)
+        )
     }
 
     private func zoomGesture(grid: GridConfig, source: GridCellSource) -> some Gesture {
         MagnificationGesture()
             .onChanged { value in
+                guard draggingSlot == nil else { return }
+                let base = zoomStart[source] ?? grid.transform(for: source).scale
+                if zoomStart[source] == nil { zoomStart[source] = base }
                 updateTransform(grid: grid, source: source) { t in
-                    t.scale = min(4, max(1, t.scale * value / max(0.01, lastMagnitude)))
+                    t.scale = min(4, max(1, base * value))
                 }
-                lastMagnitude = value
             }
-            .onEnded { _ in lastMagnitude = 1 }
+            .onEnded { _ in zoomStart[source] = nil }
     }
 
-    @State private var lastMagnitude: CGFloat = 1
+    /// Hold, then drag onto another cell to swap the two.
+    private func swapGesture(grid: GridConfig, slot: Int) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.3)
+            .sequenced(before: DragGesture(coordinateSpace: .named(canvasSpace)))
+            .updating($swapSession) { value, state, _ in
+                switch value {
+                case .first(true):
+                    state = SwapSession(slot: slot, point: nil)
+                case .second(true, let drag):
+                    state = SwapSession(slot: slot, point: drag?.location)
+                default:
+                    state = nil
+                }
+            }
+            .onEnded { value in
+                guard case .second(true, let drag?) = value,
+                      let size = lastCanvasSize,
+                      let to = self.slot(at: drag.location, grid: grid, canvasSize: size),
+                      to != slot else { return }
+
+                var updated = grid
+                updated.swapCells(slot, to)
+                markingState.updateGrid(updated)
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            }
+    }
 
     private func clampUnit(_ v: CGFloat) -> CGFloat { min(1, max(-1, v)) }
 
     // MARK: - Actions
+
+    /// Actions for the tapped cell. These used to sit in a contextMenu, which is a long
+    /// press — the same gesture that now picks a cell up for swapping.
+    @ViewBuilder
+    private func selectedCellBar(grid: GridConfig) -> some View {
+        if let slot = selectedSlot, let source = grid.selectedCells[slot] {
+            VStack(spacing: 6) {
+                // Zoom slider, because pinching a small cell is imprecise and — more to the
+                // point — a 16:9 frame in one of these cells overfills it by only a few
+                // points at 1x. There is almost nothing to pan until you zoom in, which is
+                // why dragging felt dead. The Mac target exposes a slider for the same reason.
+                HStack(spacing: 8) {
+                    Image(systemName: "minus.magnifyingglass")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.5))
+
+                    Slider(
+                        value: Binding(
+                            get: { Double(grid.transform(for: source).scale) },
+                            set: { newValue in
+                                updateTransform(grid: grid, source: source) {
+                                    $0.scale = CGFloat(newValue)
+                                }
+                            }
+                        ),
+                        in: 1...4
+                    )
+                    .tint(Color.framePullBlue)
+
+                    Text(String(format: "%.1f×", grid.transform(for: source).scale))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.6))
+                        .frame(width: 34, alignment: .trailing)
+                }
+
+                HStack(spacing: 6) {
+                    Text("Cell \(slot + 1)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.6))
+
+                    cellActionButton("Reset crop", icon: "arrow.counterclockwise") {
+                        updateTransform(grid: grid, source: source) { $0 = .identity }
+                    }
+
+                    if case .clip = source {
+                        cellActionButton("Loop ×\(grid.loopCount(for: source))", icon: "repeat") {
+                            cycleLoop(grid: grid, source: source)
+                        }
+                    }
+
+                    cellActionButton("Remove", icon: "trash", destructive: true) {
+                        setCell(nil, at: slot, on: grid)
+                        selectedSlot = nil
+                    }
+
+                    Spacer(minLength: 0)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 4)
+        }
+    }
+
+    private func cellActionButton(_ title: String, icon: String, destructive: Bool = false,
+                                  action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+                Text(title).font(.system(size: 11, weight: .semibold))
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 28)
+            .background(Capsule().fill(.white.opacity(0.12)))
+            .foregroundStyle(destructive ? .red : .white)
+        }
+        .buttonStyle(.plain)
+    }
 
     private func actionRow(grid: GridConfig) -> some View {
         HStack(spacing: 8) {
@@ -359,7 +547,7 @@ struct GridComposerView: View {
     private func sourceStrip(grid: GridConfig) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(selectedSlot == nil
-                 ? "Tap a frame to place it in the next empty cell"
+                 ? "Tap a cell to zoom and reframe it · hold a cell to swap · tap a frame below to place it"
                  : "Tap a frame to place it in the selected cell")
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.5))
