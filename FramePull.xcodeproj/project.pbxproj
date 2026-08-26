@@ -404,7 +404,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.3.1;
+				MARKETING_VERSION = 0.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = de.carlooppermann.clipkit;
 				PRODUCT_NAME = FramePull;
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -448,7 +448,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.3.1;
+				MARKETING_VERSION = 0.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = de.carlooppermann.clipkit;
 				PRODUCT_NAME = FramePull;
 				SWIFT_EMIT_LOC_STRINGS = YES;

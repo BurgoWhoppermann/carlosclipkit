@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  A native macOS app for filmmakers, editors, and content creators who need to pull frames from footage without roundtripping through a full NLE.
+  For filmmakers, editors, and content creators who need to pull frames from footage without roundtripping through a full NLE. On Mac, iPhone, and iPad.
 </p>
 
 ---
@@ -36,7 +36,9 @@ Topics: cut detection · manual & auto marking · timeline · LUT grading · Pro
 
 ## Scene detection — frame-precise
 
-FramePull samples every frame of your video at the source's actual frame rate (no hardcoded 25/30) and uses histogram-based frame comparison (Bhattacharyya distance on 8×8×8 RGB color histograms) to find cuts. Cuts land exactly on frame boundaries — no "1–2 frames behind the actual cut" drift. No cloud processing, no API calls — everything runs locally on your Mac using Apple frameworks.
+FramePull samples every frame of your video at the source's actual frame rate (no hardcoded 25/30) and compares frames as a 3×3 spatial grid of colour histograms, taking the mean per-block Bhattacharyya distance. The spatial grid is what catches cuts between two shots of the same location — a single overall histogram sees the same colour mix on both sides and misses them. Cuts land exactly on frame boundaries, with no "1–2 frames behind the actual cut" drift.
+
+No cloud processing, no API calls — everything runs locally using Apple frameworks.
 
 Detected cuts appear as markers on the timeline. You can then auto-generate stills and clips spread across scenes, or manually place them with keyboard shortcuts.
 
@@ -73,6 +75,7 @@ The Process timeline at the top is bidirectional — jump between phases freely.
 | **Multi-lane clips** | Overlapping clip ranges stack on separate lanes |
 | **Aspect ratio crops** | Export 4:5 and 9:16 variants alongside originals, with per-clip reframe control |
 | **Fullscreen-friendly** | Resizable window, content scales with available space |
+| **iPhone & iPad** | Touch marking, swipe review, export to Photos or Files. Grids and LUTs are Mac-only for now |
 
 ## Built with
 
@@ -86,8 +89,10 @@ Zero external dependencies. FramePull is built entirely on Apple frameworks:
 
 ## Install
 
-**TestFlight** — see [TestFlight invite](#) (coming soon)
-**Mac App Store** — *in review*
+**Mac App Store** — macOS 13 or later
+**App Store** — iPhone and iPad, iOS 16 or later
+
+Both platforms share one purchase.
 
 ## Feedback
 

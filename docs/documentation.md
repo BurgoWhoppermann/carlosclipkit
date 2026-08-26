@@ -256,7 +256,7 @@ The export sheet, embedded in the Process flow with a pinned action bar.
 | **Format** | JPEG, PNG, TIFF | JPEG = smallest; TIFF = lossless maximum quality |
 | **Size** | Full, Half | Scale factor applied to source resolution |
 
-Saved to `<output>/stills/`.
+Saved to `<output>/FramePull_<video name>/stills/`.
 
 #### 7.3.2 GIFs
 
@@ -266,7 +266,7 @@ Saved to `<output>/stills/`.
 | **Frame rate** | 10–30 fps | Higher = smoother but larger file |
 | **Quality** | 30–100% | Color palette quality |
 
-Estimated file size per clip updates as you adjust settings. Saved to `<output>/gifs/`.
+Estimated file size per clip updates as you adjust settings. Saved to `<output>/FramePull_<video name>/gifs/`.
 
 #### 7.3.3 Video Clips
 
@@ -275,7 +275,7 @@ Estimated file size per clip updates as you adjust settings. Saved to `<output>/
 | **Quality** | 480p, 720p, 1080p, 4K, Source | Source preserves original resolution |
 | **Mute audio** | On / Off | Strips the audio track |
 
-Saved to `<output>/videos/`.
+Saved to `<output>/FramePull_<video name>/videos/`.
 
 #### 7.3.4 Aspect Ratio Crops
 
@@ -294,6 +294,8 @@ Toggle **Export grids** to include them. Saved to `<output>/grids/`. Image and v
 #### 7.3.6 Output Folder
 
 Click **Choose…** to select an output folder. FramePull remembers your last choice via a security-scoped bookmark. iCloud Drive paths work.
+
+Everything for one video goes into a `FramePull_<video name>` folder inside the folder you choose. Exporting the same video again reuses that folder and continues the numbering, so you can add more stills later without overwriting what's already there.
 
 If you click **Export** without a folder set, the picker opens automatically and the export kicks off after you choose.
 
