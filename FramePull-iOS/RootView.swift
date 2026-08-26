@@ -14,6 +14,7 @@ struct RootView: View {
     @StateObject private var markingState = MarkingState()
     @StateObject private var player = PlayerController()
     @StateObject private var detection = DetectionController()
+    @StateObject private var recents = RecentVideoStore()
 
     @State private var videoURL: URL?
     @State private var photoItem: PhotosPickerItem?
@@ -105,6 +106,10 @@ struct RootView: View {
             }
             .padding(.horizontal, 28)
 
+            if !recents.items.isEmpty && !isLoading {
+                recentsSection
+            }
+
             if isLoading {
                 ProgressView("Loading video…")
             }
@@ -118,6 +123,50 @@ struct RootView: View {
             }
 
             Spacer()
+        }
+    }
+
+    private var recentsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Recent")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 28)
+
+            HStack(spacing: 10) {
+                ForEach(recents.items) { item in
+                    Button {
+                        Task { try? await load(url: item.url) }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ZStack {
+                                if let image = recents.thumbnails[item.path] {
+                                    Image(uiImage: image).resizable().aspectRatio(contentMode: .fill)
+                                } else {
+                                    Rectangle().fill(Color.secondary.opacity(0.15))
+                                        .overlay(Image(systemName: "film").foregroundStyle(.secondary))
+                                }
+                            }
+                            .frame(height: 62)
+                            .frame(maxWidth: .infinity)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                            Text(item.name)
+                                .font(.caption2)
+                                .lineLimit(1)
+                                .foregroundStyle(.primary)
+                            Text(item.formattedDuration)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button("Remove from recents", role: .destructive) { recents.remove(item) }
+                    }
+                }
+            }
+            .padding(.horizontal, 28)
         }
     }
 
@@ -149,6 +198,7 @@ struct RootView: View {
         markingState.videoDuration = player.duration
         markingState.sourceFrameRate = player.frameRate
         videoURL = url
+        recents.add(url: url, duration: player.duration)
 
         startDetection()
     }

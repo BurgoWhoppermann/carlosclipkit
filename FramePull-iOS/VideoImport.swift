@@ -21,13 +21,7 @@ struct PickedMovie: Transferable {
         FileRepresentation(contentType: .movie) { movie in
             SentTransferredFile(movie.url)
         } importing: { received in
-            let destination = FileManager.default.temporaryDirectory
-                .appendingPathComponent("import-\(UUID().uuidString)")
-                .appendingPathExtension(received.file.pathExtension.isEmpty ? "mov" : received.file.pathExtension)
-
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.copyItem(at: received.file, to: destination)
-            return PickedMovie(url: destination)
+            PickedMovie(url: try stageImport(of: received.file))
         }
     }
 }
@@ -50,15 +44,34 @@ func importSecurityScopedVideo(at url: URL) throws -> URL {
     let scoped = url.startAccessingSecurityScopedResource()
     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
 
-    let destination = FileManager.default.temporaryDirectory
-        .appendingPathComponent("import-\(UUID().uuidString)")
-        .appendingPathExtension(url.pathExtension.isEmpty ? "mov" : url.pathExtension)
-
     do {
-        try? FileManager.default.removeItem(at: destination)
-        try FileManager.default.copyItem(at: url, to: destination)
+        return try stageImport(of: url)
     } catch {
         throw VideoImportError.couldNotAccess
     }
+}
+
+/// Copies an incoming file into tmp, KEEPING ITS NAME.
+///
+/// Uniqueness comes from a per-import subdirectory rather than from renaming the file.
+/// The name matters downstream: every exported still, clip and grid is prefixed with
+/// `videoURL.deletingPathExtension().lastPathComponent`, as is the export folder and the
+/// Photos album. Copying to "import-<UUID>.mov" meant all of it came out named after a
+/// UUID instead of the user's video.
+func stageImport(of source: URL) throws -> URL {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("import-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+    var name = source.lastPathComponent
+    if name.isEmpty || source.pathExtension.isEmpty {
+        // Some providers hand over an extensionless temp file.
+        let base = name.isEmpty ? "Video" : source.deletingPathExtension().lastPathComponent
+        name = "\(base).mov"
+    }
+
+    let destination = directory.appendingPathComponent(name)
+    try? FileManager.default.removeItem(at: destination)
+    try FileManager.default.copyItem(at: source, to: destination)
     return destination
 }

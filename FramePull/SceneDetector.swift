@@ -67,80 +67,177 @@ class SceneDetector: @unchecked Sendable {
         progress: ((Double) -> Void)? = nil
     ) async throws -> [Double] {
         let isReadable = try await asset.load(.isReadable)
-        guard isReadable else {
-            throw SceneDetectorError.cannotLoadVideo
-        }
+        guard isReadable else { throw SceneDetectorError.cannotLoadVideo }
 
         let duration = try await asset.load(.duration)
         let durationSeconds = CMTimeGetSeconds(duration)
+        guard durationSeconds > 0 else { throw SceneDetectorError.cannotGetDuration }
 
-        guard durationSeconds > 0 else {
-            throw SceneDetectorError.cannotGetDuration
-        }
-
-        // Load the source's nominal frame rate and sample once per frame. Default to 30 if
-        // the track doesn't report a usable value (rare).
         let tracks = try await asset.loadTracks(withMediaType: .video)
         let nominalFps: Float = (try? await tracks.first?.load(.nominalFrameRate)) ?? 30
         let fps = Double(nominalFps > 0 ? nominalFps : 30)
         let frameInterval = 1.0 / fps
 
-        // Set up image generator with zero tolerance so the extracted frame is the actual
-        // frame at the requested time, not a nearby keyframe. Small output size keeps
-        // histogram computation fast.
-        let imageGenerator = AVAssetImageGenerator(asset: asset)
-        imageGenerator.appliesPreferredTrackTransform = true
-        imageGenerator.maximumSize = CGSize(width: 128, height: 128)
-        imageGenerator.requestedTimeToleranceBefore = .zero
-        imageGenerator.requestedTimeToleranceAfter = .zero
+        var allTimes: [Double] = []
+        var t = 0.0
+        while t < durationSeconds {
+            allTimes.append(t)
+            t += frameInterval
+        }
+        guard allTimes.count >= 2 else { return [] }
 
-        // Generate timestamps to sample — one per source frame.
-        let timescale: CMTimeScale = 600
-        var sampleTimes: [CMTime] = []
-        var currentTime = 0.0
-        while currentTime < durationSeconds {
-            sampleTimes.append(CMTime(seconds: currentTime, preferredTimescale: timescale))
-            currentTime += frameInterval
+        // Short clips decode fast enough that the two-pass overhead isn't worth it.
+        guard allTimes.count > Self.twoPassMinimumFrames else {
+            let pairs = try await compare(
+                times: allTimes, in: asset, threshold: threshold, progress: progress
+            )
+            return applyMinimumDuration(pairs.map(\.curr), minimum: minimumSceneDuration)
         }
 
-        let totalSamples = sampleTimes.count
-        guard totalSamples >= 2 else {
-            return []
-        }
-
-        // Use batch API: generateCGImagesAsynchronously lets AVFoundation
-        // optimize seeking across GOP boundaries instead of seeking from scratch per frame
-        let timesAsValues = sampleTimes.map { NSValue(time: $0) }
-
-        // Collect results using a continuation.
+        // PASS 1 — coarse scan.
         //
-        // The accumulator owns every piece of mutable state behind a lock. This used to
-        // be bare local vars mutated straight from the generator callback, which could
-        // hang forever: the continuation only resumed on an exact
-        // `framesProcessed == totalSamples` match, so a single lost increment — a racy
-        // callback, a frame the decoder failed to deliver under memory pressure, or the
-        // cancellation path returning before the counter bumped — meant it never resumed
-        // and detection appeared frozen.
-        let accumulator = DetectionAccumulator(
-            totalSamples: totalSamples,
-            threshold: threshold,
-            minimumSceneDuration: minimumSceneDuration,
-            detector: self
+        // Sampling every frame of a 30s 25fps clip means 750 zero-tolerance decodes, which
+        // is ~10s on a Mac and half a minute on a phone. A cut is a large change, so it is
+        // still unmistakable when frames are compared several apart; only its exact
+        // position is unknown. So scan coarsely to find WHERE a cut is, then decode every
+        // frame just around each candidate to find WHICH frame it is. Frame accuracy is
+        // preserved — only the wasted decoding between cuts goes away.
+        // One generator for both passes. Building a fresh one per refinement window cost
+        // more than the decoding it saved.
+        let generator = Self.makeGenerator(for: asset)
+
+        let stride = Self.coarseStride
+        let coarseTimes = Swift.stride(from: 0, to: allTimes.count, by: stride).map { allTimes[$0] }
+
+        // A deliberately permissive threshold: frames further apart differ more, and a
+        // missed candidate here can never be recovered later.
+        let candidates = try await compare(
+            times: coarseTimes,
+            in: asset,
+            threshold: threshold * Self.coarseThresholdFactor,
+            generator: generator,
+            progress: { progress?($0 * Self.coarseProgressShare) }
         )
 
-        let cuts: [Double] = try await withTaskCancellationHandler {
+        guard !candidates.isEmpty else { return [] }
+
+        // Consecutive candidates overlap; refining each separately would decode the same
+        // frames twice and can split one transition across two windows.
+        // Padded by two frames on each side. Candidate bounds are the decoder's ACTUAL
+        // frame times, but the window is sampled with REQUESTED times, and a zero-tolerance
+        // request lands on the frame at or before it. Without the pad the window came up
+        // one frame short and missed cuts sitting on its trailing edge — a real cut at
+        // 10.16 with distance 0.58 was silently dropped.
+        let pad = frameInterval * 2
+
+        var windows: [(lo: Double, hi: Double)] = []
+        for candidate in candidates {
+            let lo = candidate.prev - pad
+            let hi = candidate.curr + pad
+            if var last = windows.last, lo <= last.hi {
+                last.hi = max(last.hi, hi)
+                windows[windows.count - 1] = last
+            } else {
+                windows.append((lo, hi))
+            }
+        }
+
+        // PASS 2 — refine each window to exact frames.
+        var refined: [Double] = []
+        for (index, window) in windows.enumerated() {
+            try Task.checkCancellation()
+
+            let frames = allTimes.filter { $0 >= window.lo && $0 <= window.hi }
+            guard frames.count >= 2 else { continue }
+
+            // EVERY transition above the real threshold, not just the strongest: two cuts
+            // 0.16s apart fall inside one coarse window, and keeping only the maximum threw
+            // the second away. minimumSceneDuration collapses genuine duplicates later.
+            let exact = try await compare(
+                times: frames, in: asset, threshold: threshold, generator: generator
+            )
+            refined.append(contentsOf: exact.map(\.curr))
+
+            progress?(Self.coarseProgressShare
+                      + (1 - Self.coarseProgressShare) * Double(index + 1) / Double(windows.count))
+        }
+
+        progress?(1)
+        return applyMinimumDuration(refined.sorted(), minimum: minimumSceneDuration)
+    }
+
+    // Two-pass tuning, measured on 30s of real 25fps footage (750 frames). Single pass
+    // was 9.79s; these settings give 4.45s for an identical 16-cut result, and the
+    // synthetic 4-scene clip still yields exactly 3 cuts.
+    //
+    // Stride 4 beats larger strides: wider coarse gaps mean wider refinement windows, and
+    // the extra decoding there outweighs the samples saved. Factor 0.85 keeps a margin
+    // below the real threshold — comparing frames 4 apart across a cut yields a LARGER
+    // distance than adjacent frames do, so the coarse pass cannot miss what the fine pass
+    // would find, but the margin covers fast cutting where a shot briefly returns.
+    // Giving the coarse pass loose seek tolerance was tried and made no difference (4.51s):
+    // batch generation already decodes ordered times efficiently.
+    private static let twoPassMinimumFrames = 240
+    private static let coarseStride = 4
+    private static let coarseThresholdFactor = 0.85
+    private static let coarseProgressShare = 0.7
+
+    /// Suppresses cuts that land closer together than `minimum`, keeping the earliest.
+    private func applyMinimumDuration(_ cuts: [Double], minimum: Double) -> [Double] {
+        var result: [Double] = []
+        var last = -Double.greatestFiniteMagnitude
+        for cut in cuts where cut - last >= minimum {
+            result.append(cut)
+            last = cut
+        }
+        return result
+    }
+
+
+    /// One comparison of consecutive frames at the given times.
+    ///
+    /// Shared by both passes: the coarse scan calls it with strided times, the refinement
+    /// with every frame around a candidate. Returns the transitions whose distance exceeds
+    /// `threshold`, each carrying the frame before, the frame after, and the distance.
+    struct FramePair {
+        let prev: Double
+        let curr: Double
+        let distance: Double
+    }
+
+    private func compare(
+        times: [Double],
+        in asset: AVURLAsset,
+        threshold: Double,
+        generator: AVAssetImageGenerator? = nil,
+        progress: ((Double) -> Void)? = nil
+    ) async throws -> [FramePair] {
+        guard times.count >= 2 else { return [] }
+
+        let imageGenerator = generator ?? Self.makeGenerator(for: asset)
+        let sampleTimes = times.map { CMTime(seconds: $0, preferredTimescale: 600) }
+        let timesAsValues = sampleTimes.map { NSValue(time: $0) }
+
+        // The accumulator owns every piece of mutable state behind a lock and guarantees
+        // the continuation resumes exactly once. Bare local vars mutated straight from the
+        // generator callback could hang forever: resuming only on an exact
+        // `framesProcessed == totalSamples` match meant a single lost increment — a racy
+        // callback, a frame the decoder failed to deliver under memory pressure, or the
+        // cancellation path returning before the counter bumped — left it never resuming.
+        let accumulator = DetectionAccumulator(totalSamples: times.count, threshold: threshold, detector: self)
+
+        return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                // Watchdog: if the generator stops delivering callbacks entirely, finish
-                // with whatever was found instead of waiting forever.
+                // Watchdog: if the generator stops delivering callbacks entirely, surface
+                // the stall rather than waiting forever.
                 let watchdog = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
                 watchdog.schedule(deadline: .now() + 30, repeating: 30)
                 watchdog.setEventHandler {
                     guard accumulator.hasStalled() else { return }
                     watchdog.cancel()
                     imageGenerator.cancelAllCGImageGeneration()
-                    // Surface the stall instead of returning what we happened to have.
-                    // Partial cuts look exactly like a completed run, which silently
-                    // hides missing scene cuts — worse than an error the user can retry.
+                    // Deliberately not partial results: a truncated run looks identical to
+                    // a completed one and silently hides missing scene cuts.
                     if let progressed = accumulator.finishStalled() {
                         continuation.resume(throwing: SceneDetectorError.detectionStalled(
                             framesCompleted: progressed.completed,
@@ -162,17 +259,16 @@ class SceneDetector: @unchecked Sendable {
                         return
                     }
 
-                    // Counts the callback even when cgImage is nil, so a frame the decoder
-                    // could not produce can never stall the run. The index is derived from
-                    // requestedTime rather than arrival order — see DetectionAccumulator.
-                    let index = Int((CMTimeGetSeconds(requestedTime) / frameInterval).rounded())
+                    // Index from requestedTime, not arrival order — see DetectionAccumulator.
+                    let requested = CMTimeGetSeconds(requestedTime)
+                    let index = times.enumerated()
+                        .min(by: { abs($0.element - requested) < abs($1.element - requested) })?
+                        .offset ?? 0
+
                     let step = accumulator.consume(index: index, image: cgImage, actualTime: actualTime)
 
-                    if let fraction = step.progressFraction {
-                        progress?(fraction)
-                    }
-
-                    if let result = step.finishedCuts {
+                    if let fraction = step.progressFraction { progress?(fraction) }
+                    if let result = step.finishedPairs {
                         watchdog.cancel()
                         continuation.resume(returning: result)
                     }
@@ -181,8 +277,17 @@ class SceneDetector: @unchecked Sendable {
         } onCancel: {
             imageGenerator.cancelAllCGImageGeneration()
         }
+    }
 
-        return cuts
+    /// Zero seek tolerance so the extracted frame is the actual frame at the requested
+    /// time, not a nearby keyframe. Small output keeps histogram work cheap.
+    private static func makeGenerator(for asset: AVURLAsset) -> AVAssetImageGenerator {
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 128, height: 128)
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        return generator
     }
 
     // Spatial histogram layout. A single global colour histogram cannot tell a cut
@@ -635,7 +740,6 @@ private final class DetectionAccumulator: @unchecked Sendable {
     private let lock = NSLock()
     private let totalSamples: Int
     private let threshold: Double
-    private let minimumSceneDuration: Double
     private unowned let detector: SceneDetector
 
     private struct Frame {
@@ -643,9 +747,9 @@ private final class DetectionAccumulator: @unchecked Sendable {
         let time: Double
     }
 
-    private var cuts: [Double] = []
-    private var lastCutTime: Double = 0
+    private var pairs: [SceneDetector.FramePair] = []
     private var previousHistogram: [Double]?
+    private var previousTime: Double = 0
     private var pending: [Int: Frame] = [:]
     private var nextIndex = 0
     private var framesProcessed = 0
@@ -654,24 +758,22 @@ private final class DetectionAccumulator: @unchecked Sendable {
 
     struct Step {
         var progressFraction: Double?
-        var finishedCuts: [Double]?
+        var finishedPairs: [SceneDetector.FramePair]?
     }
 
-    init(totalSamples: Int, threshold: Double, minimumSceneDuration: Double, detector: SceneDetector) {
+    init(totalSamples: Int, threshold: Double, detector: SceneDetector) {
         self.totalSamples = totalSamples
         self.threshold = threshold
-        self.minimumSceneDuration = minimumSceneDuration
         self.detector = detector
     }
 
     /// Frames are compared strictly in timeline order.
     ///
-    /// generateCGImagesAsynchronously does not guarantee the handler fires in the order
-    /// the times were requested, and histogram comparison is inherently sequential — a
-    /// frame is only meaningful against the one before it. Comparing in arrival order
-    /// silently corrupts the result (it dropped a 3-cut clip to 1 cut). So each frame is
-    /// filed under its own index and the queue is drained in order; out-of-order arrivals
-    /// wait in `pending`, which stays small because the generator decodes broadly forward.
+    /// generateCGImagesAsynchronously does not guarantee the handler fires in the order the
+    /// times were requested, and histogram comparison is inherently sequential — a frame is
+    /// only meaningful against the one before it. Comparing in arrival order silently
+    /// corrupts the result (it dropped a 3-cut clip to 1 cut). So each frame is filed under
+    /// its own index and the queue drained in order.
     func consume(index: Int, image: CGImage?, actualTime: CMTime) -> Step {
         // Histogram work stays outside the lock — it's the expensive part and needs
         // nothing shared.
@@ -684,19 +786,20 @@ private final class DetectionAccumulator: @unchecked Sendable {
         framesProcessed += 1
         pending[index] = Frame(histogram: histogram, time: sampleTime)
 
-        // Drain every frame that is now contiguous with what we've already compared.
         while let frame = pending.removeValue(forKey: nextIndex) {
             nextIndex += 1
             guard let histogram = frame.histogram else { continue }
 
             if let previous = previousHistogram {
                 let distance = detector.frameDistance(previous, histogram)
-                if distance > threshold, frame.time - lastCutTime >= minimumSceneDuration {
-                    cuts.append(frame.time)
-                    lastCutTime = frame.time
+                if distance > threshold {
+                    pairs.append(SceneDetector.FramePair(
+                        prev: previousTime, curr: frame.time, distance: distance
+                    ))
                 }
             }
             previousHistogram = histogram
+            previousTime = frame.time
         }
 
         var step = Step()
@@ -706,7 +809,7 @@ private final class DetectionAccumulator: @unchecked Sendable {
         // `>=` rather than `==`: an exact match is too fragile to hang a whole import on.
         if framesProcessed >= totalSamples, !finished {
             finished = true
-            step.finishedCuts = cuts.sorted()
+            step.finishedPairs = pairs.sorted { $0.curr < $1.curr }
         }
         return step
     }

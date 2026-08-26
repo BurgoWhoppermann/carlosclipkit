@@ -29,7 +29,7 @@ enum ExportDestination: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
-        case .photos: return "Saved straight to your camera roll. Folders are flattened — Photos has no folders."
+        case .photos: return "Saved into a FramePull album named after the video. Photos has no folders, so stills, clips and grids sit together."
         case .files:  return "Pick a folder. Keeps the stills / gifs / videos structure."
         }
     }
@@ -107,7 +107,7 @@ final class ExportCoordinator: ObservableObject {
                 case .photos:
                     status = "Saving to Photos…"
                     let count = try await saveToPhotos(from: workDir)
-                    completionMessage = "Saved \(count) item\(count == 1 ? "" : "s") to Photos."
+                    completionMessage = "Saved \(count) item\(count == 1 ? "" : "s") to the FramePull_\(ProcessingUtilities.sanitizedFolderName(sourceName)) album."
                     try? FileManager.default.removeItem(at: workDir)
                 case .files:
                     status = "Choose a destination folder."
@@ -249,6 +249,13 @@ final class ExportCoordinator: ObservableObject {
         let authorized = await requestPhotoAddPermission()
         guard authorized else { throw ExportDeliveryError.photosDenied }
 
+        // Photos has no folders, so the Files layout cannot survive — but it does have
+        // albums. Everything from one source video goes into FramePull_<video name>,
+        // mirroring the folder name used on disk, instead of scattering across the camera
+        // roll. Re-exporting the same video adds to the existing album.
+        let albumName = "FramePull_\(ProcessingUtilities.sanitizedFolderName(sourceName))"
+        let album = try? await albumCollection(named: albumName)
+
         let files = filesRecursively(in: workDir)
         var saved = 0
 
@@ -261,10 +268,38 @@ final class ExportCoordinator: ObservableObject {
             try await PHPhotoLibrary.shared().performChanges {
                 let request = PHAssetCreationRequest.forAsset()
                 request.addResource(with: isVideo ? .video : .photo, fileURL: url, options: nil)
+
+                // Adding to the album in the same change block keeps the asset and the
+                // membership atomic; doing it afterwards needs a second fetch and can race.
+                if let album,
+                   let placeholder = request.placeholderForCreatedAsset,
+                   let albumChange = PHAssetCollectionChangeRequest(for: album) {
+                    albumChange.addAssets([placeholder] as NSArray)
+                }
             }
             saved += 1
         }
         return saved
+    }
+
+    /// Existing album with this name, or a newly created one.
+    private func albumCollection(named name: String) async throws -> PHAssetCollection? {
+        let options = PHFetchOptions()
+        options.predicate = NSPredicate(format: "localizedTitle = %@", name)
+        let existing = PHAssetCollection.fetchAssetCollections(
+            with: .album, subtype: .albumRegular, options: options
+        )
+        if let found = existing.firstObject { return found }
+
+        var placeholder: PHObjectPlaceholder?
+        try await PHPhotoLibrary.shared().performChanges {
+            let request = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: name)
+            placeholder = request.placeholderForCreatedAssetCollection
+        }
+        guard let id = placeholder?.localIdentifier else { return nil }
+        return PHAssetCollection.fetchAssetCollections(
+            withLocalIdentifiers: [id], options: nil
+        ).firstObject
     }
 
     private func requestPhotoAddPermission() async -> Bool {
