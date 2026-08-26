@@ -125,9 +125,12 @@ struct MobileTimelineView: View {
             .onChanged { value in
                 isScrubbing = true
                 player.pause()
-                player.seek(to: time(forX: value.location.x, width: width))
+                player.scrub(to: time(forX: value.location.x, width: width))
             }
-            .onEnded { _ in isScrubbing = false }
+            .onEnded { _ in
+                isScrubbing = false
+                player.endScrub()
+            }
     }
 
     private var zoomGesture: some Gesture {

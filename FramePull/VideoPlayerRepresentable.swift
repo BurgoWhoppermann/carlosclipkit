@@ -358,8 +358,11 @@ class LoopingPlayerController: ObservableObject {
         player.seek(to: cmTime, toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
+    /// One source frame, from the track's own rate. A hardcoded 1/25 here moved 1.2
+    /// frames per step on 30fps footage, which reads as stuttering while stepping.
+    var frameDuration: Double { 1.0 / Double(max(1, sourceFrameRate)) }
+
     func stepFrames(_ count: Int) {
-        let frameDuration = 1.0 / 25.0
         let newTime = max(0, min(duration, currentTime + Double(count) * frameDuration))
         seek(to: newTime)
     }
@@ -382,24 +385,31 @@ class LoopingPlayerController: ObservableObject {
         isSeeking = true
         let cmTime = CMTime(seconds: time, preferredTimescale: 600)
 
-        // Short videos (< 5s) typically have few keyframes — keyframe-tolerant scrubbing snaps
-        // every drag to the same frame, then the "exact final seek" jumps to the precise frame,
-        // producing a visible flicker. For short clips, decode is cheap; do exact seeks throughout.
-        let useExact = duration > 0 && duration < 5.0
-        let tolerance: CMTime = useExact ? .zero : .positiveInfinity
+        // Tolerance is bounded to a single source frame, NEVER .positiveInfinity.
+        //
+        // Infinite tolerance tells AVPlayer to land on the nearest *keyframe*. On
+        // all-intra footage (ProRes) every frame is a keyframe, so it looked perfect.
+        // On long-GOP H.264 the nearest keyframe can be most of a second away, so the
+        // picture snapped between keyframes while dragging and then jumped again when
+        // the final exact seek landed — the stuttering, flashing, "not sure where it is"
+        // behaviour, and the reason MP4 felt broken while ProRes felt smooth.
+        //
+        // With a one-frame bound the drag shows the frame under the cursor and the final
+        // exact seek moves at most one frame, so there is nothing visible left to correct.
+        let tolerance = CMTime(seconds: frameDuration, preferredTimescale: 600)
 
         // Optimizes networking/buffering during rapid seeks
         player.currentItem?.preferredForwardBufferDuration = 1.0
 
         player.seek(to: cmTime, toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] _ in
             guard let self else { return }
-            
+
             if let pending = self.pendingSeek {
                 self.pendingSeek = nil
                 self.isSeeking = false
                 self.scrub(to: pending)
             } else {
-                // When pending is exhausted (cursor stopped), do one final exact seek
+                // Cursor stopped — settle on the exact frame.
                 let exactTime = CMTime(seconds: self.currentTime, preferredTimescale: 600)
                 self.player.seek(to: exactTime, toleranceBefore: .zero, toleranceAfter: .zero) { _ in
                     // Restore default forward buffering
@@ -412,7 +422,7 @@ class LoopingPlayerController: ObservableObject {
     }
 
     var currentFrame: Int {
-        Int(currentTime * 25) + 1
+        Int(currentTime * Double(max(1, sourceFrameRate))) + 1
     }
 
     var formattedCurrentTime: String {

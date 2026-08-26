@@ -255,6 +255,14 @@ Output folder access uses `startAccessingSecurityScopedResource()` / `stopAccess
 
 ## Tricky bits worth knowing
 
+- **Never scrub with `.positiveInfinity` seek tolerance.** It lands on the nearest
+  *keyframe*. On all-intra footage (ProRes) every frame is a keyframe so it looks
+  perfect, but on long-GOP H.264 the nearest keyframe can be half a second away.
+  Measured on identical 30fps content: keyframe tolerance lands up to **14.5 frames**
+  off (avg 7); one-frame tolerance lands within **1 frame** (avg 0.5), for the same
+  cost. Both `scrub(to:)` implementations bound tolerance to `frameDuration` and
+  coalesce — one seek in flight, newest target kept, exact seek when the cursor stops.
+
 - **`AnimatedGIFView`** uses a `PassthroughImageView` (NSImageView subclass) that returns `nil` from `hitTest`, `false` from `acceptsFirstResponder` / `acceptsFirstMouse`, and forwards mouseDown/Up/Dragged to the next responder. Required for `.onDrag` and `.onTapGesture` to work on parent SwiftUI views — NSImageView swallows mouse events at the AppKit layer otherwise.
 - **`HSplitView` autosave** is done via a tiny `SplitViewAutosave` NSViewRepresentable that walks up to the enclosing NSSplitView and sets `autosaveName = "GridBuilderSplit"`.
 - **`GridExporter.exportVideoGrid`** uses `defer { writer.cancelWriting() + remove file }` on any throw (including cancellation) so user-aborted exports never leave a corrupt MP4.

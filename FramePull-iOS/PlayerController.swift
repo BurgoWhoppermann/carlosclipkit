@@ -30,6 +30,11 @@ final class PlayerController: ObservableObject {
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
 
+    // Scrub coalescing: at most one seek in flight, only the newest target kept.
+    private var pendingSeek: Double?
+    private var isSeeking = false
+    private var isScrubbing = false
+
     var frameDuration: Double { 1.0 / max(1.0, frameRate) }
 
     init() {
@@ -80,8 +85,11 @@ final class PlayerController: ObservableObject {
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             guard let self else { return }
             MainActor.assumeIsolated {
-                self.currentTime = CMTimeGetSeconds(time)
                 self.isPlaying = self.player.rate != 0
+                // While dragging, the playhead follows the finger. Letting the observer
+                // write here too makes it flick back to wherever the player actually is.
+                guard !self.isScrubbing else { return }
+                self.currentTime = CMTimeGetSeconds(time)
             }
         }
     }
@@ -122,8 +130,60 @@ final class PlayerController: ObservableObject {
         player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
+    /// Scrub target for a drag in progress.
+    ///
+    /// Issuing a fresh exact seek on every gesture callback floods AVPlayer: each request
+    /// on long-GOP H.264 has to decode from the preceding keyframe, they queue up, and the
+    /// picture lurches between stale positions. ProRes hid this because it is all-intra and
+    /// every seek is cheap.
+    ///
+    /// So: one seek in flight at a time, keeping only the newest target, with tolerance
+    /// bounded to a single frame. When the finger stops, settle on the exact frame.
+    func scrub(to time: Double) {
+        let clamped = min(max(0, time), max(0, duration))
+        currentTime = clamped
+        isScrubbing = true
+
+        guard !isSeeking else {
+            pendingSeek = clamped
+            return
+        }
+        isSeeking = true
+
+        let target = CMTime(seconds: clamped, preferredTimescale: 600)
+        let tolerance = CMTime(seconds: frameDuration, preferredTimescale: 600)
+
+        player.seek(to: target, toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] _ in
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                if let pending = self.pendingSeek {
+                    self.pendingSeek = nil
+                    self.isSeeking = false
+                    self.scrub(to: pending)
+                } else {
+                    let exact = CMTime(seconds: self.currentTime, preferredTimescale: 600)
+                    self.player.seek(to: exact, toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+                        MainActor.assumeIsolated {
+                            self.isSeeking = false
+                            self.isScrubbing = false
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Call when a drag ends, so the playhead settles on an exact frame even if the last
+    /// scrub was still in flight.
+    func endScrub() {
+        guard !isSeeking else { return }
+        isScrubbing = false
+        seek(to: currentTime)
+    }
+
     func stepFrames(_ count: Int) {
         pause()
+        isScrubbing = false
         seek(to: currentTime + Double(count) * frameDuration)
     }
 }
