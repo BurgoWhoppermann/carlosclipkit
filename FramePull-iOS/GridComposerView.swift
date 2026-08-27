@@ -48,11 +48,19 @@ struct GridComposerView: View {
     @GestureState private var swapSession: SwapSession?
     @State private var lastCanvasSize: CGSize?
 
+    /// Drop target, tracked while the finger moves.
+    ///
+    /// Deliberately NOT read from onEnded's payload. The sequenced long-press-then-drag
+    /// does not reliably carry the final DragGesture.Value there, so `case .second(true,
+    /// let drag?)` failed to match and a correctly computed target was thrown away — the
+    /// swap silently did nothing. Confirmed on device: an on-screen readout showed the hit
+    /// test returning the right cell throughout the drag, while nothing moved.
+    @State private var pendingDrop: Int?
+
     private var draggingSlot: Int? { swapSession?.slot }
 
     private func dropTarget(in grid: GridConfig) -> Int? {
-        guard let point = swapSession?.point, let size = lastCanvasSize else { return nil }
-        return slot(at: point, grid: grid, canvasSize: size)
+        swapSession == nil ? nil : pendingDrop
     }
 
     private var grids: [GridConfig] { markingState.grids }
@@ -413,11 +421,15 @@ struct GridComposerView: View {
                     state = nil
                 }
             }
-            .onEnded { value in
-                guard case .second(true, let drag?) = value,
-                      let size = lastCanvasSize,
-                      let to = self.slot(at: drag.location, grid: grid, canvasSize: size),
-                      to != slot else { return }
+            .onChanged { value in
+                guard case .second(true, let drag) = value,
+                      let location = drag?.location,
+                      let size = lastCanvasSize else { return }
+                pendingDrop = self.slot(at: location, grid: grid, canvasSize: size)
+            }
+            .onEnded { _ in
+                defer { pendingDrop = nil }
+                guard let to = pendingDrop, to != slot else { return }
 
                 var updated = grid
                 updated.swapCells(slot, to)
